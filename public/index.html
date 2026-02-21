@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en" translate="no" class="notranslate">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="google" content="notranslate" />
+  <title>Terminal</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <style>
+    /* Nerd Font for Powerline/symbols in prompts (e.g. EMACS  nickcis  ~ ) so they render on Android Chrome */
+    @font-face {
+      font-family: 'JetBrainsMono Nerd Font';
+      src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@master/patched-fonts/JetBrainsMono/Ligatures/Regular/JetBrainsMonoNerdFont-Regular.ttf') format('truetype');
+      font-weight: normal;
+      font-style: normal;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0d1117; min-height: 100vh; padding: 0; }
+    #terminal-wrap { position: fixed; width: 100%; max-width: 1200px; left: 0; top: 0; right: 0; bottom: 0; margin: 0 auto; }
+    #terminal-container { width: 100%; height: 100%; min-height: 200px; }
+    .float-btn {
+      position: fixed; z-index: 100; top: 16px; width: 40px; height: 40px;
+      border: none; border-radius: 8px; cursor: pointer; font-size: 18px;
+      background: rgba(33, 38, 45, 0.92); color: #c9d1d9; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .float-btn:hover { background: rgba(48, 54, 61, 0.92); }
+    .float-btn.left { left: 16px; }
+    .float-btn.right { right: 16px; }
+    .menu {
+      position: fixed; z-index: 99; top: 64px; min-width: 200px; max-height: 70vh; overflow: auto;
+      background: rgba(33, 38, 45, 0.92); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+      padding: 8px 0; display: none;
+    }
+    .menu.open { display: block; }
+    .menu.left { left: 16px; }
+    .menu.right { right: 16px; }
+    .menu-item {
+      display: block; width: 100%; padding: 10px 16px; border: none; background: none;
+      color: #c9d1d9; text-align: left; cursor: pointer; font-size: 14px;
+      border-radius: 0; font-family: inherit;
+    }
+    .menu-item:hover { background: #30363d; }
+    .menu-item.current { background: #388bfd33; color: #58a6ff; }
+    .menu-item small { display: block; color: #8b949e; font-size: 11px; margin-top: 2px; }
+    .menu-hr { border: none; height: 1px; background: #30363d; margin: 4px 0; }
+    .toolbox-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; align-items: center; }
+    .toolbox-row label { color: #8b949e; font-size: 12px; margin-right: 4px; }
+    .key-btn {
+      padding: 6px 10px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117;
+      color: #c9d1d9; cursor: pointer; font-size: 12px; font-family: inherit;
+    }
+    .key-btn:hover { background: #21262d; }
+    .key-btn.active,
+    .key-btn.active:hover { background: #388bfd; border-color: #58a6ff; color: #fff; }
+    #special-keyboard {
+      position: fixed; left: 0; right: 0; z-index: 98; display: none;
+      background: rgba(22, 27, 34, 0.95); padding: 8px; border-top: 1px solid #30363d;
+      flex-direction: column; gap: 6px; align-items: center;
+      /* top/bottom set in JS from visualViewport */
+    }
+    #special-keyboard.open { display: flex; }
+    #special-keyboard .keyboard-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    #special-keyboard .key-btn { min-width: 44px; }
+  </style>
+</head>
+<body>
+  <button type="button" class="float-btn left" id="sessions-btn" title="Sessions">≡</button>
+  <div class="menu left" id="sessions-menu"></div>
+
+  <button type="button" class="float-btn right" id="toolbox-btn" title="Toolbox">⌘</button>
+  <div class="menu right" id="toolbox-menu"></div>
+
+  <div id="terminal-wrap">
+    <div id="terminal-container"></div>
+  </div>
+
+  <div id="special-keyboard"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
