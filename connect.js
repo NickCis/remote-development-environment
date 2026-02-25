@@ -25,6 +25,10 @@ Options:
   --resize       Reset PTY size to current terminal dimensions on connect
   -h, --help     Show this help
 
+Key bindings (while attached):
+  Ctrl+^ d     Detach (disconnect, session stays open)
+  Ctrl+^ r     Resize (send current terminal size to PTY)
+
 Environment:
   TERMINAL_URL   WebSocket URL of the server (default: ws://localhost:3000)
 
@@ -84,7 +88,28 @@ const ws = new WebSocket(url);
 let raw = false;
 let sessionReceived = false;
 
+const PREFIX_BYTE = 0x1e;
+const PREFIX_TIMEOUT_MS = 400;
+let prefixPending = false;
+let prefixTimeout = null;
+
+function sendResize() {
+  const { rows, columns } = process.stdout;
+  if (ws.readyState === WebSocket.OPEN && rows != null && columns != null) {
+    ws.send('\x01' + JSON.stringify({ type: 'resize', cols: columns, rows }));
+  }
+}
+
+function clearPrefix() {
+  prefixPending = false;
+  if (prefixTimeout) {
+    clearTimeout(prefixTimeout);
+    prefixTimeout = null;
+  }
+}
+
 function restoreStdin() {
+  clearPrefix();
   if (raw && process.stdin.isTTY) {
     process.stdin.setRawMode(false);
     process.stdin.pause();
@@ -98,15 +123,60 @@ ws.on('open', () => {
   process.stdin.resume();
   process.stdin.setEncoding('utf8');
 
-  if (doResize) {
-    const { rows, columns } = process.stdout;
-    if (rows != null && columns != null) {
-      ws.send('\x01' + JSON.stringify({ type: 'resize', cols: columns, rows }));
-    }
-  }
+  if (doResize) sendResize();
 
   process.stdin.on('data', (chunk) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
+    let i = 0;
+    while (i < buf.length) {
+      if (prefixPending) {
+        const b = buf[i++];
+        clearPrefix();
+        if (b === 0x64 || b === 0x44) {
+          ws.close();
+          return;
+        }
+        if (b === 0x72 || b === 0x52) {
+          sendResize();
+          if (i < buf.length) ws.send(buf.slice(i));
+          return;
+        }
+        ws.send(Buffer.from([PREFIX_BYTE, b]));
+        if (i < buf.length) ws.send(buf.slice(i));
+        return;
+      }
+      if (buf[i] === PREFIX_BYTE) {
+        i++;
+        if (i >= buf.length) {
+          prefixPending = true;
+          prefixTimeout = setTimeout(() => {
+            if (prefixPending) {
+              prefixPending = false;
+              if (ws.readyState === WebSocket.OPEN) ws.send(Buffer.from([PREFIX_BYTE]));
+            }
+            prefixTimeout = null;
+          }, PREFIX_TIMEOUT_MS);
+          return;
+        }
+        const b = buf[i++];
+        if (b === 0x64 || b === 0x44) {
+          ws.close();
+          return;
+        }
+        if (b === 0x72 || b === 0x52) {
+          sendResize();
+          if (i < buf.length) ws.send(buf.slice(i));
+          return;
+        }
+        ws.send(Buffer.from([PREFIX_BYTE, b]));
+        continue;
+      }
+      const next = buf.indexOf(PREFIX_BYTE, i);
+      const end = next === -1 ? buf.length : next;
+      if (end > i) ws.send(buf.slice(i, end));
+      i = end;
+    }
   });
 });
 
@@ -135,12 +205,7 @@ ws.on('error', (err) => {
   restoreStdin();
 });
 
-process.on('SIGWINCH', () => {
-  const { rows, columns } = process.stdout;
-  if (ws.readyState === WebSocket.OPEN && rows != null && columns != null) {
-    ws.send('\x01' + JSON.stringify({ type: 'resize', cols: columns, rows }));
-  }
-});
+process.on('SIGWINCH', sendResize);
 
 process.on('SIGINT', restoreStdin);
 process.on('SIGTERM', restoreStdin);

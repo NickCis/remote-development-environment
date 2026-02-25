@@ -304,12 +304,6 @@ resizeBtn.textContent = 'Resize to screen';
 resizeBtn.type = 'button';
 resizeBtn.onclick = () => { sendResize(); };
 resizeRow.appendChild(resizeBtn);
-const forceResizeBtn = document.createElement('button');
-forceResizeBtn.className = 'key-btn';
-forceResizeBtn.textContent = 'Force size calculation';
-forceResizeBtn.type = 'button';
-forceResizeBtn.onclick = () => { sendResize(); };
-resizeRow.appendChild(forceResizeBtn);
 toolboxMenu.appendChild(resizeRow);
 
 let autoResize = true;
@@ -327,7 +321,8 @@ const autoResizeRow = document.createElement('div');
 autoResizeRow.className = 'toolbox-row';
 const autoResizeBtn = document.createElement('button');
 autoResizeBtn.className = 'key-btn';
-autoResizeBtn.textContent = 'Auto Resize: off';
+autoResizeBtn.textContent = autoResize ? 'Auto Resize: on' : 'Auto Resize: off';
+autoResizeBtn.classList.toggle('active', autoResize);
 autoResizeBtn.type = 'button';
 autoResizeBtn.onclick = () => {
   autoResize = !autoResize;
