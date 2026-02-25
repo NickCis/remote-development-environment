@@ -149,6 +149,28 @@ function sendResize() {
   sendToPty('\x01' + JSON.stringify({ type: 'resize', cols: cols, rows: rows }));
 }
 
+let toastTimeout = null;
+function showToast(message, durationMs) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = null;
+  el.textContent = message;
+  el.classList.add('show');
+  if (durationMs > 0) {
+    toastTimeout = setTimeout(() => {
+      toastTimeout = null;
+      el.classList.remove('show');
+    }, durationMs);
+  }
+}
+function hideToast() {
+  const el = document.getElementById('toast');
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = null;
+  if (el) el.classList.remove('show');
+}
+
 function applyModifiers(data) {
   if (!modifiers.ctrl && !modifiers.alt && !modifiers.meta && !modifiers.shift) return data;
   if (data.length !== 1) return data;
@@ -186,8 +208,10 @@ function connect() {
 
   ws.onopen = () => {
     closingForReplace = false;
-    term.writeln('Connected to bash. Type to start.');
+    showToast('Connected. Type to start.', 3000);
     sendResize();
+    fitAddon.fit();
+    if (typeof term.refresh === 'function') term.refresh(0, term.rows - 1);
     term.focus();
   };
 
@@ -214,7 +238,7 @@ function connect() {
       closingForReplace = false;
     }
     if (ev.code === 4001 || ev.reason === 'session closed') {
-      term.writeln('\r\n\r\nSession closed.');
+      showToast('Session closed.', 8000);
       currentSessionId = null;
       const url = new URL(location.href);
       url.searchParams.delete('session');
@@ -222,18 +246,18 @@ function connect() {
       return;
     }
     if (currentSessionId || getSessionParam()) {
-      term.writeln('\r\n\r\nConnection lost. Reconnecting…');
+      showToast('Connection lost. Reconnecting…', 0);
       reconnectTimeout = setTimeout(() => {
         reconnectTimeout = null;
         connect();
       }, 2000);
     } else {
-      term.writeln('\r\n\r\nDisconnected.');
+      showToast('Disconnected.', 4000);
     }
   };
 
   ws.onerror = () => {
-    term.writeln('\r\nConnection error.');
+    showToast('Connection error.', 4000);
   };
 }
 
@@ -392,7 +416,6 @@ toolboxMenu.appendChild(autoResizeRow);
 window.addEventListener('resize', onViewportChange);
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', onViewportChange);
-  window.visualViewport.addEventListener('scroll', onViewportChange);
 }
 
 const fullscreenRow = document.createElement('div');
