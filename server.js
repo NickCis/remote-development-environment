@@ -90,7 +90,7 @@ function getOrCreateSession(sessionParam) {
     pty.onExit(({ exitCode, signal }) => {
       const reason = signal ? `signal ${signal}` : `exitCode ${exitCode}`;
       log(`Session closed: ${id}, reason: ${reason}`);
-      clients.forEach((ws) => ws.close());
+      clients.forEach((ws) => ws.close(4001, 'session closed'));
       clients.clear();
       sessions.delete(id);
       if (lastSessionId === id) lastSessionId = null;
@@ -141,7 +141,7 @@ function getOrCreateSession(sessionParam) {
     pty.onExit(({ exitCode, signal }) => {
       const reason = signal ? `signal ${signal}` : `exitCode ${exitCode}`;
       log(`Session closed: ${id}, reason: ${reason}`);
-      clients.forEach((ws) => ws.close());
+      clients.forEach((ws) => ws.close(4001, 'session closed'));
       clients.clear();
       sessions.delete(id);
       if (lastSessionId === id) lastSessionId = null;

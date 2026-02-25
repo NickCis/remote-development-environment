@@ -1,5 +1,5 @@
 {
-  "name": "pty-test",
+  "name": "remote-development-environment",
   "version": "1.0.0",
   "description": "Web terminal using node-pty and xterm.js",
   "main": "server.js",

@@ -1,4 +1,4 @@
-# Agent context (pty-test)
+# Agent context (remote-development-environment)
 
 Node.js web terminal: bash in a PTY via **node-pty**, rendered in the browser with **xterm.js**, shared sessions between web and CLI.
 

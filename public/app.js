@@ -27,12 +27,16 @@ fitAddon.fit();
 
 let ws = new WebSocket(wsUrl);
 let currentSessionId = null;
+let closingForReplace = false;
+let reconnectTimeout = null;
 
-const modifiers = { ctrl: false, alt: false, meta: false };
-const modifierSticky = { ctrl: false, alt: false, meta: false };
+const modifiers = { ctrl: false, alt: false, meta: false, shift: false };
+const modifierSticky = { ctrl: false, alt: false, meta: false, shift: false };
 const LONG_PRESS_MS = 500;
 const DOUBLE_TAP_MS = 400;
 const SINGLE_DELAY_MS = 300;
+const KEY_REPEAT_DELAY_MS = 500;
+const KEY_REPEAT_INTERVAL_MS = 80;
 
 function sendToPty(data) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
@@ -146,7 +150,7 @@ function sendResize() {
 }
 
 function applyModifiers(data) {
-  if (!modifiers.ctrl && !modifiers.alt && !modifiers.meta) return data;
+  if (!modifiers.ctrl && !modifiers.alt && !modifiers.meta && !modifiers.shift) return data;
   if (data.length !== 1) return data;
   const c = data.charCodeAt(0);
   if (modifiers.ctrl) {
@@ -159,6 +163,10 @@ function applyModifiers(data) {
       return String.fromCharCode(c - 64);
     }
   }
+  if (modifiers.shift && c >= 97 && c <= 122) {
+    if (!modifierSticky.shift) modifiers.shift = false;
+    return String.fromCharCode(c - 32);
+  }
   if (modifiers.alt || modifiers.meta) {
     if (!modifierSticky.alt) modifiers.alt = false;
     if (!modifierSticky.meta) modifiers.meta = false;
@@ -168,12 +176,16 @@ function applyModifiers(data) {
 }
 
 function connect() {
+  clearTimeout(reconnectTimeout);
+  reconnectTimeout = null;
+  closingForReplace = true;
   if (ws) ws.close();
   sessionParam = getSessionParam();
   wsUrl = `${protocol}//${location.host}?session=${encodeURIComponent(sessionParam)}`;
   ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
+    closingForReplace = false;
     term.writeln('Connected to bash. Type to start.');
     sendResize();
     term.focus();
@@ -196,8 +208,28 @@ function connect() {
     term.write(data);
   };
 
-  ws.onclose = () => {
-    term.writeln('\r\n\r\nSession closed.');
+  ws.onclose = (ev) => {
+    if (ev.target !== ws) return;
+    if (closingForReplace) {
+      closingForReplace = false;
+    }
+    if (ev.code === 4001 || ev.reason === 'session closed') {
+      term.writeln('\r\n\r\nSession closed.');
+      currentSessionId = null;
+      const url = new URL(location.href);
+      url.searchParams.delete('session');
+      history.replaceState(null, '', url.pathname + url.search);
+      return;
+    }
+    if (currentSessionId || getSessionParam()) {
+      term.writeln('\r\n\r\nConnection lost. Reconnecting…');
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        connect();
+      }, 2000);
+    } else {
+      term.writeln('\r\n\r\nDisconnected.');
+    }
   };
 
   ws.onerror = () => {
@@ -213,6 +245,18 @@ term.onData((data) => {
   const out = applyModifiers(data);
   sendToPty(out);
   updateModifierButtons();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  const termEl = document.getElementById('terminal-container');
+  if (!termEl || !termEl.contains(document.activeElement)) return;
+  e.preventDefault();
+  sendToPty(e.shiftKey ? '\x1b[Z' : '\x09');
+  if (e.shiftKey && modifiers.shift && !modifierSticky.shift) {
+    modifiers.shift = false;
+    updateModifierButtons();
+  }
 });
 
 term.onResize(({ cols, rows }) => {
@@ -271,8 +315,8 @@ const specialKeysRow1 = [
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\x09' },
   { label: '↑', data: '\x1b[A' },
-  { label: 'Meta', mod: 'meta' },
-  { label: 'Enter', data: '\r' },
+  { label: 'Shift', mod: 'shift' },
+  { label: '⏎', data: '\r', title: 'Enter' },
 ];
 const specialKeysRow2 = [
   { label: 'Ctrl', mod: 'ctrl' },
@@ -282,6 +326,18 @@ const specialKeysRow2 = [
   { label: 'Alt', mod: 'alt' },
 ];
 const specialKeys = [...specialKeysRow1, ...specialKeysRow2];
+
+function getSpecialKeyData(k) {
+  if (k.data === '\x09' && modifiers.shift) return '\x1b[Z';
+  return k.data;
+}
+
+function clearShiftIfUsedForKey(k) {
+  if (k.data === '\x09' && modifiers.shift && !modifierSticky.shift) {
+    modifiers.shift = false;
+    updateModifierButtons();
+  }
+}
 
 function updateModifierButtons() {
   toolboxMenu.querySelectorAll('.key-btn[data-mod]').forEach((btn) => {
@@ -407,7 +463,7 @@ function handleModifierRelease(btn, mod, duration) {
   if (modifiers[mod]) {
     modifiers[mod] = false;
     updateModifierButtons();
-    return;
+    return false;
   }
   if (btn._modPendingTimeout) {
     clearTimeout(btn._modPendingTimeout);
@@ -417,7 +473,7 @@ function handleModifierRelease(btn, mod, duration) {
     modifiers[mod] = true;
     modifierSticky[mod] = true;
     updateModifierButtons();
-    return;
+    return false;
   }
   var now = Date.now();
   if ((btn._modLastTap || 0) && now - btn._modLastTap < DOUBLE_TAP_MS) {
@@ -425,7 +481,7 @@ function handleModifierRelease(btn, mod, duration) {
     modifiers[mod] = true;
     modifierSticky[mod] = true;
     updateModifierButtons();
-    return;
+    return false;
   }
   btn._modLastTap = now;
   btn._modPendingTimeout = setTimeout(function () {
@@ -433,45 +489,123 @@ function handleModifierRelease(btn, mod, duration) {
     modifiers[mod] = true;
     modifierSticky[mod] = false;
     updateModifierButtons();
+    btn.classList.remove('pressed');
   }, SINGLE_DELAY_MS);
+  return true;
+}
+
+function stopKeyRepeat(b) {
+  if (b._repeatTimeout != null) {
+    clearTimeout(b._repeatTimeout);
+    b._repeatTimeout = null;
+  }
+  if (b._repeatInterval != null) {
+    clearInterval(b._repeatInterval);
+    b._repeatInterval = null;
+  }
+  b._didRepeat = true;
+}
+
+function startKeyRepeat(b, data) {
+  stopKeyRepeat(b);
+  b._didRepeat = false;
+  sendToPty(data);
+  b._repeatTimeout = setTimeout(() => {
+    b._repeatTimeout = null;
+    b._repeatInterval = setInterval(() => sendToPty(data), KEY_REPEAT_INTERVAL_MS);
+  }, KEY_REPEAT_DELAY_MS);
+}
+
+function setKeyPressed(btn, pressed) {
+  if (pressed) {
+    btn.classList.add('pressed');
+    if (navigator.vibrate) navigator.vibrate(10);
+  } else {
+    btn.classList.remove('pressed');
+  }
 }
 
 function addKeyButton(container, k) {
   const b = document.createElement('button');
   b.className = 'key-btn';
   b.textContent = k.label;
+  if (k.title) b.title = k.title;
   b.type = 'button';
   b.setAttribute('tabindex', '-1');
   if (k.mod) b.setAttribute('data-mod', k.mod);
+  const isNonMod = !k.mod && k.data;
   b.addEventListener('mousedown', (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    setKeyPressed(b, true);
     b._modStartTime = Date.now();
+    if (isNonMod) {
+      startKeyRepeat(b, getSpecialKeyData(k));
+      clearShiftIfUsedForKey(k);
+    }
+  });
+  b.addEventListener('mouseup', (e) => {
+    e.stopPropagation();
+    if (k.mod) {
+      var duration = Date.now() - (b._modStartTime || 0);
+      var pending = handleModifierRelease(b, k.mod, duration);
+      if (!pending) setKeyPressed(b, false);
+    } else {
+      setKeyPressed(b, false);
+      if (isNonMod) stopKeyRepeat(b);
+    }
+  });
+  b.addEventListener('mouseleave', () => {
+    if (k.mod && b._modPendingTimeout) return;
+    setKeyPressed(b, false);
+    if (isNonMod) stopKeyRepeat(b);
   });
   b.addEventListener('touchstart', (e) => {
     e.preventDefault();
+    e.stopPropagation();
+    setKeyPressed(b, true);
     b._modStartTime = Date.now();
+    if (isNonMod) {
+      startKeyRepeat(b, getSpecialKeyData(k));
+      clearShiftIfUsedForKey(k);
+    }
   }, { passive: false });
   let touchHandled = false;
   b.addEventListener('touchend', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     if (k.mod) {
       var duration = Date.now() - (b._modStartTime || 0);
-      handleModifierRelease(b, k.mod, duration);
+      var pending = handleModifierRelease(b, k.mod, duration);
+      if (!pending) setKeyPressed(b, false);
       touchHandled = true;
       setTimeout(() => { touchHandled = false; }, 300);
     } else {
-      sendToPty(k.data);
+      setKeyPressed(b, false);
+      if (isNonMod) stopKeyRepeat(b);
+      if (!b._didRepeat) {
+        sendToPty(getSpecialKeyData(k));
+        clearShiftIfUsedForKey(k);
+      }
       touchHandled = true;
-      setTimeout(() => { touchHandled = false; }, 300);
+      setTimeout(() => { touchHandled = false; b._didRepeat = false; }, 300);
     }
   }, { passive: false });
+  b.addEventListener('touchcancel', () => {
+    if (k.mod && b._modPendingTimeout) return;
+    setKeyPressed(b, false);
+    if (isNonMod) stopKeyRepeat(b);
+  }, { passive: false });
   b.addEventListener('click', (e) => {
+    e.stopPropagation();
     if (touchHandled) return;
+    if (isNonMod && b._didRepeat) return;
     if (k.mod) {
       var duration = Date.now() - (b._modStartTime || 0);
       handleModifierRelease(b, k.mod, duration);
     } else {
-      sendToPty(k.data);
+      sendToPty(getSpecialKeyData(k));
+      clearShiftIfUsedForKey(k);
     }
   });
   container.appendChild(b);
@@ -493,6 +627,15 @@ toolboxBtn.addEventListener('click', (e) => {
 });
 
 document.addEventListener('click', () => toolboxMenu.classList.remove('open'));
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (ws && ws.readyState !== WebSocket.OPEN && (currentSessionId || getSessionParam())) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+    connect();
+  }
+});
 
 if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', positionFloatingUI);

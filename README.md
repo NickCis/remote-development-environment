@@ -1,6 +1,6 @@
-# Web Terminal (node-pty + xterm.js)
+# remote-development-environment
 
-A small Node.js web app that runs bash in a PTY via `node-pty` and renders it in the browser with xterm.js.
+A small Node.js web app (node-pty + xterm.js) that runs bash in a PTY and renders it in the browser.
 
 ## Setup
 
