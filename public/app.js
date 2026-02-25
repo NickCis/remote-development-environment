@@ -270,16 +270,16 @@ const specialKeyboard = document.getElementById('special-keyboard');
 const specialKeysRow1 = [
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\x09' },
-  { label: 'Enter', data: '\r' },
-  { label: 'Ctrl', mod: 'ctrl' },
-  { label: 'Alt', mod: 'alt' },
+  { label: '↑', data: '\x1b[A' },
   { label: 'Meta', mod: 'meta' },
+  { label: 'Enter', data: '\r' },
 ];
 const specialKeysRow2 = [
+  { label: 'Ctrl', mod: 'ctrl' },
   { label: '←', data: '\x1b[D' },
   { label: '↓', data: '\x1b[B' },
-  { label: '↑', data: '\x1b[A' },
   { label: '→', data: '\x1b[C' },
+  { label: 'Alt', mod: 'alt' },
 ];
 const specialKeys = [...specialKeysRow1, ...specialKeysRow2];
 

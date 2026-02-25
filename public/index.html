@@ -56,10 +56,12 @@
       position: fixed; left: 0; right: 0; z-index: 98; display: none;
       background: rgba(22, 27, 34, 0.95); padding: 8px; border-top: 1px solid #30363d;
       flex-direction: column; gap: 6px; align-items: center;
+      /* leave space for floating buttons (16px + 40px each side) */
+      padding-left: 56px; padding-right: 56px;
       /* top/bottom set in JS from visualViewport */
     }
-    #special-keyboard.open { display: flex; }
-    #special-keyboard .keyboard-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    #special-keyboard.open { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: auto auto; gap: 6px; }
+    #special-keyboard .keyboard-row { display: contents; }
     #special-keyboard .key-btn { min-width: 44px; }
   </style>
 </head>

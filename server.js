@@ -1,4 +1,5 @@
 const express = require('express');
+const net = require('net');
 const { spawn } = require('node-pty');
 const { WebSocketServer } = require('ws');
 const path = require('path');
@@ -25,7 +26,23 @@ const server = app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
+const tunnelWss = new WebSocketServer({ noServer: true });
+
+const MAX_TUNNEL_CHANNELS = 256;
+
+server.on('upgrade', (req, socket, head) => {
+  const pathname = parse(req.url || '').pathname;
+  if (pathname === '/tunnel') {
+    tunnelWss.handleUpgrade(req, socket, head, (ws) => {
+      tunnelWss.emit('connection', ws, req);
+    });
+  } else {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      wss.emit('connection', ws, req);
+    });
+  }
+});
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -150,9 +167,19 @@ wss.on('connection', (ws, req) => {
 
   ws.on('message', (msg) => {
     if (!session.pty) return;
+    if (Buffer.isBuffer(msg) && msg.length >= 1 && msg[0] === 0) {
+      log('Terminal received tunnel protocol data; client may be using wrong path (use /tunnel for port forwarding)');
+      ws.close();
+      return;
+    }
     const data = msg.toString();
     if (data.startsWith('\x01')) {
-      const payload = JSON.parse(data.slice(1));
+      let payload;
+      try {
+        payload = JSON.parse(data.slice(1));
+      } catch (_) {
+        return;
+      }
       if (payload.type === 'resize' && payload.cols != null && payload.rows != null) {
         session.pty.resize(payload.cols, payload.rows);
       }
@@ -164,5 +191,71 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     log(`Connection closed: ${clientType}, session: ${id}`);
     session.clients.delete(ws);
+  });
+});
+
+function sendTunnelClose(ws, channelId) {
+  if (ws.readyState !== 1) return;
+  const buf = Buffer.allocUnsafe(5);
+  buf[0] = 2;
+  buf.writeUInt32BE(channelId, 1);
+  ws.send(buf);
+}
+
+function sendTunnelData(ws, channelId, data) {
+  if (ws.readyState !== 1) return;
+  const len = data.length;
+  if (len > 65535) return;
+  const buf = Buffer.allocUnsafe(7 + len);
+  buf[0] = 1;
+  buf.writeUInt32BE(channelId, 1);
+  buf.writeUInt16BE(len, 5);
+  data.copy(buf, 7);
+  ws.send(buf);
+}
+
+tunnelWss.on('connection', (ws) => {
+  const channels = new Map();
+  log('Tunnel connection opened');
+
+  ws.on('message', (msg) => {
+    if (!Buffer.isBuffer(msg)) return;
+    const buf = msg;
+    if (buf.length < 5) return;
+    const type = buf[0];
+    const channelId = buf.readUInt32BE(1);
+    if (type === 0) {
+      if (channels.size >= MAX_TUNNEL_CHANNELS) return;
+      if (buf.length < 7) return;
+      const port = buf.readUInt16BE(5);
+      const sock = net.connect(port, '127.0.0.1');
+      channels.set(channelId, sock);
+      sock.on('data', (data) => sendTunnelData(ws, channelId, data));
+      sock.on('end', () => {
+        channels.delete(channelId);
+        sendTunnelClose(ws, channelId);
+      });
+      sock.on('error', () => {
+        channels.delete(channelId);
+        sendTunnelClose(ws, channelId);
+      });
+      sock.on('close', () => channels.delete(channelId));
+    } else if (type === 1) {
+      if (buf.length < 7) return;
+      const len = buf.readUInt16BE(5);
+      if (buf.length < 7 + len) return;
+      const sock = channels.get(channelId);
+      if (sock && sock.writable) sock.write(buf.subarray(7, 7 + len));
+    } else if (type === 2) {
+      const sock = channels.get(channelId);
+      if (sock) sock.destroy();
+      channels.delete(channelId);
+    }
+  });
+
+  ws.on('close', () => {
+    channels.forEach((sock) => sock.destroy());
+    channels.clear();
+    log('Tunnel connection closed');
   });
 });

@@ -3,22 +3,49 @@ const WebSocket = require('ws');
 const http = require('http');
 const https = require('https');
 
-const baseUrl = process.env.TERMINAL_URL || 'ws://localhost:3000';
-const args = process.argv.slice(2);
-const doHelp = args.includes('--help') || args.includes('-h');
-const doList = args.includes('--list') || args.includes('-l');
-const doResize = args.includes('--resize');
-const sessionArg = args.filter((a) => !['--list', '-l', '--resize', '--help', '-h'].includes(a))[0];
-const sessionParam = sessionArg === undefined ? '' : sessionArg;
+const flags = ['--list', '-l', '--resize', '--help', '-h'];
+const positional = process.argv.slice(2).filter((a) => !flags.includes(a));
+const doHelp = process.argv.includes('--help') || process.argv.includes('-h');
+const doList = process.argv.includes('--list') || process.argv.includes('-l');
+const doResize = process.argv.includes('--resize');
+
+function looksLikeServer(s) {
+  if (!s || s === 'new') return false;
+  if (s.includes(':')) return true;
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRe.test(s)) return false;
+  return true;
+}
+
+let serverSpec = null;
+let sessionParam = '';
+if (positional.length >= 2) {
+  serverSpec = positional[0];
+  sessionParam = positional[1];
+} else if (positional.length === 1) {
+  if (looksLikeServer(positional[0])) {
+    serverSpec = positional[0];
+  } else {
+    sessionParam = positional[0];
+  }
+}
+
+let baseUrl = process.env.TERMINAL_URL || 'ws://localhost:3000';
+if (serverSpec) {
+  const host = serverSpec.includes(':') ? serverSpec.slice(0, serverSpec.indexOf(':')) : serverSpec;
+  const port = serverSpec.includes(':') ? serverSpec.slice(serverSpec.indexOf(':') + 1) : '3000';
+  baseUrl = `ws://${host}:${port}`;
+}
 
 const help = `
-Usage: connect [options] [session]
+Usage: connect [options] [host[:port]] [session]
 
 Attach to a terminal session (shared with the web UI). If session is omitted,
 attaches to the last used session or creates a new one.
 
 Arguments:
-  session    Session UUID to attach to, or "new" to create a new session
+  host[:port]   Server host and optional port (default port 3000)
+  session       Session UUID to attach to, or "new" to create a new session
 
 Options:
   -l, --list     List active session IDs and exit (no TTY required)
@@ -33,11 +60,12 @@ Environment:
   TERMINAL_URL   WebSocket URL of the server (default: ws://localhost:3000)
 
 Examples:
-  connect                 # last session, or new
-  connect new             # new session
-  connect <uuid>          # attach to session
-  connect --list          # list sessions
-  connect --resize new    # new session and reset PTY size
+  connect                        # last session, or new
+  connect new                    # new session
+  connect 192.168.1.1:3000 new  # server and new session
+  connect localhost  <uuid>      # server and session
+  connect --list                 # list sessions
+  connect --resize new           # new session and reset PTY size
 `;
 
 if (doHelp) {
