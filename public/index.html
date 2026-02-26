@@ -15,10 +15,19 @@
       font-style: normal;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #0d1117; min-height: 100vh; padding: 0; }
+    html, body {
+      margin: 0;
+      background: #0d1117;
+      min-height: 100vh;
+      padding: 0;
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: auto;
+    }
+    body { overflow: hidden; }
     #terminal-wrap { position: fixed; width: 100%; left: 0; top: 0; right: 0; bottom: 0; }
     #terminal-container { width: 100%; height: 100%; min-height: 200px; }
     .xterm .xterm-viewport { -webkit-overflow-scrolling: touch; }
+    .xterm, .xterm .xterm-viewport, .xterm .xterm-screen { touch-action: pan-y; }
     .float-btn {
       position: fixed; z-index: 100; top: 16px; width: 40px; height: 40px;
       border: none; border-radius: 8px; cursor: pointer; font-size: 18px;
@@ -46,6 +55,8 @@
     .menu-hr { border: none; height: 1px; background: #30363d; margin: 4px 0; }
     .toolbox-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; align-items: center; }
     .toolbox-row label { color: #8b949e; font-size: 12px; margin-right: 4px; }
+    .toolbox-keys-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 8px 12px; }
+    .toolbox-keys-grid .key-btn { min-width: 0; }
     .key-btn {
       padding: 6px 10px; border: 1px solid #30363d; border-radius: 4px; background: #0d1117;
       color: #c9d1d9; cursor: pointer; font-size: 12px; font-family: inherit;
@@ -58,13 +69,19 @@
       position: fixed; left: 0; right: 0; z-index: 98; display: none;
       background: rgba(22, 27, 34, 0.95); padding: 8px; border-top: 1px solid #30363d;
       flex-direction: column; gap: 6px; align-items: center;
-      /* leave space for floating buttons (16px + 40px each side) */
-      padding-left: 56px; padding-right: 56px;
       /* top/bottom set in JS from visualViewport */
     }
-    #special-keyboard.open { display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: auto auto; gap: 6px; }
+    #special-keyboard.open { display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: auto auto; column-gap: 6px; row-gap: 2px; }
     #special-keyboard .keyboard-row { display: contents; }
     #special-keyboard .key-btn { min-width: 44px; }
+    #special-keyboard .float-btn {
+      position: static; width: 100%; height: auto; min-width: 44px;
+      padding: 6px 10px; border: 1px solid #30363d; border-radius: 4px;
+      background: #0d1117; color: #c9d1d9; font-size: 12px; font-family: inherit;
+      box-shadow: none; z-index: auto;
+    }
+    #special-keyboard .float-btn:hover { background: #21262d; }
+    #special-keyboard .keyboard-row-spacer { min-width: 0; min-height: 44px; }
     #toast {
       position: fixed; left: 50%; top: 12px; transform: translateX(-50%);
       z-index: 101; padding: 10px 16px; border-radius: 8px;

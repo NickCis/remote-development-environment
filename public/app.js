@@ -96,12 +96,12 @@ function positionFloatingUI() {
   var menuAbove = ourKbOpen && ourKbHeight > 0;
   var menuBottom = menuAbove ? (vv.offsetTop + vv.height - btnTop + 8) : '';
 
-  if (sessionsBtn) {
+  if (sessionsBtn && !sk.contains(sessionsBtn)) {
     sessionsBtn.style.top = btnTop + 'px';
     sessionsBtn.style.left = (vv.offsetLeft + btnLeftMargin) + 'px';
     sessionsBtn.style.right = '';
   }
-  if (toolboxBtn) {
+  if (toolboxBtn && !sk.contains(toolboxBtn)) {
     toolboxBtn.style.top = btnTop + 'px';
     toolboxBtn.style.left = '';
     toolboxBtn.style.right = (window.innerWidth - vv.offsetLeft - vv.width + btnRightMargin) + 'px';
@@ -124,8 +124,8 @@ function positionFloatingUI() {
       toolboxMenu.style.bottom = '';
       toolboxMenu.style.top = menuTop + 'px';
     }
-    toolboxMenu.style.left = '';
-    toolboxMenu.style.right = (window.innerWidth - vv.offsetLeft - vv.width + btnRightMargin) + 'px';
+    toolboxMenu.style.left = ourKbOpen ? (vv.offsetLeft + btnLeftMargin) + 'px' : '';
+    toolboxMenu.style.right = ourKbOpen ? '' : (window.innerWidth - vv.offsetLeft - vv.width + btnRightMargin) + 'px';
   }
   if (sk && ourKbOpen) {
     sk.style.top = (vv.offsetTop + vv.height - ourKbHeight) + 'px';
@@ -338,18 +338,40 @@ const specialKeyboard = document.getElementById('special-keyboard');
 const specialKeysRow1 = [
   { label: 'Esc', data: '\x1b' },
   { label: 'Tab', data: '\x09' },
-  { label: '↑', data: '\x1b[A' },
   { label: 'Shift', mod: 'shift' },
-  { label: '⏎', data: '\r', title: 'Enter' },
+  { label: '↑', data: '\x1b[A' },
+  { label: 'Supr', data: '\x1b[3~', title: 'Delete' },
+  { label: 'PgUp', data: '\x1b[5~' },
+  { label: '⌫', data: '\x7f', title: 'Backspace' },
 ];
 const specialKeysRow2 = [
   { label: 'Ctrl', mod: 'ctrl' },
+  { label: 'Alt', mod: 'alt' },
   { label: '←', data: '\x1b[D' },
   { label: '↓', data: '\x1b[B' },
   { label: '→', data: '\x1b[C' },
-  { label: 'Alt', mod: 'alt' },
+  { label: 'PgDn', data: '\x1b[6~' },
+  { label: '⏎', data: '\r', title: 'Enter' },
 ];
 const specialKeys = [...specialKeysRow1, ...specialKeysRow2];
+const toolboxKeysGrid = [
+  { label: 'Esc', data: '\x1b' },
+  { label: 'Tab', data: '\x09' },
+  { label: 'PgUp', data: '\x1b[5~' },
+  { label: '↑', data: '\x1b[A' },
+  { label: '⏎', data: '\r', title: 'Enter' },
+  { label: 'Ctrl', mod: 'ctrl' },
+  { label: '←', data: '\x1b[D' },
+  { label: 'PgDn', data: '\x1b[6~' },
+  { label: '↓', data: '\x1b[B' },
+  { label: '→', data: '\x1b[C' },
+  { label: 'Alt', mod: 'alt' },
+  { label: 'Shift', mod: 'shift' },
+  { label: 'Meta', mod: 'meta' },
+  { label: '⌫', data: '\x7f', title: 'Backspace' },
+  { label: 'Del', data: '\x1b[3~', title: 'Delete' },
+  { label: 'Ins', data: '\x1b[2~', title: 'Insert' },
+];
 
 function getSpecialKeyData(k) {
   if (k.data === '\x09' && modifiers.shift) return '\x1b[Z';
@@ -438,10 +460,10 @@ toolboxMenu.appendChild(fullscreenRow);
 const modRow = document.createElement('div');
 modRow.className = 'toolbox-row';
 modRow.innerHTML = '<label>Modifiers</label>';
-['ctrl', 'alt', 'meta'].forEach((m) => {
+['ctrl', 'alt', 'shift', 'meta'].forEach((m) => {
   const b = document.createElement('button');
   b.className = 'key-btn';
-  b.textContent = m === 'ctrl' ? 'Ctrl' : m === 'alt' ? 'Alt' : 'Meta';
+  b.textContent = m === 'ctrl' ? 'Ctrl' : m === 'alt' ? 'Alt' : m === 'shift' ? 'Shift' : 'Meta';
   b.setAttribute('data-mod', m);
   b.type = 'button';
   b.onclick = () => { modifiers[m] = !modifiers[m]; updateModifierButtons(); };
@@ -449,18 +471,24 @@ modRow.innerHTML = '<label>Modifiers</label>';
 });
 toolboxMenu.appendChild(modRow);
 
-const keysRow = document.createElement('div');
-keysRow.className = 'toolbox-row';
-keysRow.innerHTML = '<label>Keys</label>';
-[...specialKeysRow1.filter((k) => k.data), ...specialKeysRow2].forEach((k) => {
+const keysGrid = document.createElement('div');
+keysGrid.className = 'toolbox-row toolbox-keys-grid';
+keysGrid.innerHTML = '<label style="grid-column: 1 / -1;">Keys</label>';
+toolboxKeysGrid.forEach((k) => {
   const b = document.createElement('button');
   b.className = 'key-btn';
   b.textContent = k.label;
+  if (k.title) b.title = k.title;
   b.type = 'button';
-  b.onclick = () => sendToPty(k.data);
-  keysRow.appendChild(b);
+  if (k.mod) {
+    b.setAttribute('data-mod', k.mod);
+    b.onclick = () => { modifiers[k.mod] = !modifiers[k.mod]; updateModifierButtons(); };
+  } else {
+    b.onclick = () => sendToPty(getSpecialKeyData(k));
+  }
+  keysGrid.appendChild(b);
 });
-toolboxMenu.appendChild(keysRow);
+toolboxMenu.appendChild(keysGrid);
 
 const kbRow = document.createElement('div');
 kbRow.className = 'toolbox-row';
@@ -471,8 +499,33 @@ kbToggle.type = 'button';
 // On mobile: float our keyboard above the browser's virtual keyboard when open (visualViewport API).
 // If it doesn't work: try focusing the terminal after opening our keyboard so the native keyboard stays closed,
 // or keep "Show keyboard" on and use only our keys to avoid opening the native keyboard.
+function moveMenuButtonsIntoKeyboard() {
+  if (!specialKeyboard.classList.contains('open')) return;
+  if (!specialKeyboard.contains(sessionsBtn)) {
+    sessionsBtn.classList.add('key-btn');
+    toolboxBtn.classList.add('key-btn');
+    kbRow1.insertBefore(sessionsBtn, kbRow1.firstChild);
+    kbRow2.insertBefore(toolboxBtn, kbRow2.firstChild);
+  }
+}
+
+function moveMenuButtonsOutOfKeyboard() {
+  if (specialKeyboard.contains(sessionsBtn)) {
+    sessionsBtn.classList.remove('key-btn');
+    toolboxBtn.classList.remove('key-btn');
+    document.body.insertBefore(sessionsBtn, sessionsMenu);
+    document.body.insertBefore(toolboxBtn, toolboxMenu);
+  }
+}
+
 kbToggle.onclick = () => {
+  const opening = !specialKeyboard.classList.contains('open');
   specialKeyboard.classList.toggle('open');
+  if (opening) {
+    moveMenuButtonsIntoKeyboard();
+  } else {
+    moveMenuButtonsOutOfKeyboard();
+  }
   kbToggle.textContent = specialKeyboard.classList.contains('open') ? 'Hide keyboard' : 'Show keyboard';
   requestAnimationFrame(() => {
     positionFloatingUI();

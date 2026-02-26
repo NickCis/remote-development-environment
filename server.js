@@ -6,8 +6,44 @@ const path = require('path');
 const { parse } = require('url');
 const crypto = require('crypto');
 
+function parseArgs() {
+  const args = process.argv.slice(2);
+  let port = process.env.PORT || 3000;
+  let host = '127.0.0.1';
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '-p' || a === '--port') {
+      const v = args[++i];
+      if (v != null) port = parseInt(v, 10) || port;
+    } else if (a === '-H' || a === '--host') {
+      const v = args[++i];
+      if (v === 'all' || v === '0' || v === '0.0.0.0') host = '0.0.0.0';
+      else if (v) host = v;
+    } else if (a === '--all') {
+      host = '0.0.0.0';
+    } else if (a === '-h' || a === '--help') {
+      console.log(`
+Usage: node server.js [options]
+
+Options:
+  -p, --port <number>   Port to listen on (default: 3000 or PORT env)
+  -H, --host <address>  Host to bind: 127.0.0.1 (local only), 0.0.0.0 (all interfaces), or an IP
+  --all                 Shorthand for --host 0.0.0.0 (listen on all interfaces / local network)
+  -h, --help            Show this help
+
+Examples:
+  node server.js --port 8080
+  node server.js --all
+  node server.js --host 0.0.0.0 -p 3000
+`);
+      process.exit(0);
+    }
+  }
+  return { port, host };
+}
+
+const { port: PORT, host: HOST } = parseArgs();
 const app = express();
-const PORT = process.env.PORT || 3000;
 
 const sessions = new Map();
 let lastSessionId = null;
@@ -22,8 +58,9 @@ app.get('/api/sessions', (_req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  const addr = HOST === '0.0.0.0' ? `http://0.0.0.0:${PORT}` : `http://${HOST}:${PORT}`;
+  console.log(`Server running at ${addr}`);
 });
 
 const wss = new WebSocketServer({ noServer: true });
