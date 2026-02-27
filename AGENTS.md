@@ -1,25 +1,19 @@
 # Agent context (remote-development-environment)
 
-Node.js web terminal: bash in a PTY via **node-pty**, rendered in the browser with **xterm.js**, shared sessions between web and CLI.
+Node.js web terminal: bash in a PTY via **node-pty**, rendered in the browser with **xterm.js**. Sessions are shared between web and CLI. Optional port-forwarding over a separate WebSocket path.
 
 ## Layout
 
-- **server.js** – Express server, WebSocket (ws), session map by UUID, `GET /api/sessions`. Spawns one PTY per session; multiple clients can attach to the same session.
-- **connect.js** – CLI client: `node connect.js [options] [session]`. Connects with `?session=<id|new>&client=cli`. Use `--list` / `-l` to list sessions, `--resize` to send resize on connect, `-h` / `--help` for help.
-- **public/** – Static assets. **index.html** loads xterm.js (and fit addon) and sets up the page. **app.js** drives the terminal: WebSocket to server, session from `?session=`, session/toolbox menus, modifier keys, floating keyboard, viewport/positioning (visualViewport for mobile), fullscreen, auto-resize.
-
-## Run
-
-```bash
-npm install
-npm start   # http://localhost:3000
-node connect.js [session]   # attach from CLI
-```
+- **server.js** – Express server, WebSocket (ws). Path-based upgrade: `/tunnel` → tunnel handler (binary protocol, TCP bridge), else → terminal handler. Session map by UUID; one PTY per session; multiple clients can attach. `GET /api/sessions`. CLI: `-p/--port`, `-H/--host`, `--all` (bind 0.0.0.0), `-h/--help`.
+- **connect.js** – CLI client: `node connect.js [host[:port]] [session]`. Uses `?session=<id|new>&client=cli`. Options: `--list`/`-l`, `--resize`, `-h/--help`. Ctrl+^ d detach; Ctrl+D sends to PTY (session can exit).
+- **tunnel.py** – Port-forwarding client: WebSocket to `/tunnel`, binary protocol (open/data/close), reconnect. Usage: `[host:port] port1 [port2 ...]`.
+- **public/** – **index.html**: xterm.css, viewport/overscroll (no pull-to-refresh), toast, fixed keyboard grid. **app.js**: WebSocket, session from `?session=`, reconnection (toast only; code 4001 = session closed, no reconnect), sessions/toolbox menus, modifiers (Ctrl/Alt/Shift/Meta), toolbox keys grid, fixed keyboard with key repeat and menu buttons in grid (row1: Left menu | Esc, Tab, Shift, ↑, Supr, PgUp, ⌫; row2: Right menu | Ctrl, Alt, ←, ↓, →, PgDn, Enter). Terminal scroll: `touch-action: pan-y` on xterm viewport; no `visualViewport.scroll` → resize to avoid breaking scroll. Fit + refresh on reconnect.
 
 ## Sessions
 
-- Identified by UUID. `?session=new` or `session=new` creates a new one; no param uses last or creates. Web and CLI share the same session when using the same UUID.
-- Server logs: new session, session closed (exitCode/signal), connection opened/closed with type `browser` or `cmd` (CLI sends `client=cli`).
+- UUID; `?session=new` or omit = last or new. Web and CLI share session by UUID.
+- **Closing:** Only when PTY exits (e.g. Ctrl+D). Server closes client connections with **code 4001, reason 'session closed'**. Browser shows toast "Session closed." and clears session from URL (no reconnect). CLI exits on close.
+- Server logs: new session, session closed (exitCode/signal), connection opened/closed (browser/cmd).
 
 ## Stack
 
