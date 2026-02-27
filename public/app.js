@@ -222,9 +222,20 @@ function connect() {
         const msg = JSON.parse(data.trim());
         if (msg.type === 'session' && msg.id) {
           currentSessionId = msg.id;
+          term.reset();
           const url = new URL(location.href);
           url.searchParams.set('session', msg.id);
           history.replaceState(null, '', url.pathname + url.search);
+          return;
+        }
+        if (msg.type === 'replay' && msg.data) {
+          try {
+            const binary = atob(msg.data);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const str = new TextDecoder('utf-8').decode(bytes);
+            term.write(str);
+          } catch (_) {}
           return;
         }
       } catch (_) {}
@@ -695,6 +706,11 @@ const kbRow2 = document.createElement('div');
 kbRow2.className = 'keyboard-row';
 specialKeysRow2.forEach((k) => addKeyButton(kbRow2, k));
 specialKeyboard.appendChild(kbRow2);
+
+specialKeyboard.classList.add('open');
+moveMenuButtonsIntoKeyboard();
+kbToggle.textContent = 'Hide keyboard';
+requestAnimationFrame(() => { positionFloatingUI(); sendResize(); });
 
 toolboxBtn.addEventListener('click', (e) => {
   e.stopPropagation();

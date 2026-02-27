@@ -210,12 +210,18 @@ ws.on('open', () => {
 
 ws.on('message', (data) => {
   const str = data.toString();
-  if (!sessionReceived && str.endsWith('\n')) {
+  if (str.endsWith('\n')) {
     try {
       const msg = JSON.parse(str.trim());
       if (msg.type === 'session' && msg.id) {
         sessionReceived = true;
         process.stderr.write(`Session: ${msg.id}\n`);
+        return;
+      }
+      if (msg.type === 'replay' && msg.data) {
+        try {
+          process.stdout.write(Buffer.from(msg.data, 'base64'));
+        } catch (_) {}
         return;
       }
     } catch (_) {}

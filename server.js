@@ -44,6 +44,7 @@ Examples:
 
 const { port: PORT, host: HOST } = parseArgs();
 const app = express();
+app.set('trust proxy', true);
 
 const sessions = new Map();
 let lastSessionId = null;
@@ -67,6 +68,15 @@ const wss = new WebSocketServer({ noServer: true });
 const tunnelWss = new WebSocketServer({ noServer: true });
 
 const MAX_TUNNEL_CHANNELS = 256;
+const MAX_SCROLLBACK_BYTES = 200 * 1024;
+
+function appendToScrollback(session, data) {
+  const chunk = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data);
+  session.outputBuffer = Buffer.concat([session.outputBuffer, chunk]);
+  if (session.outputBuffer.length > MAX_SCROLLBACK_BYTES) {
+    session.outputBuffer = session.outputBuffer.subarray(session.outputBuffer.length - MAX_SCROLLBACK_BYTES);
+  }
+}
 
 server.on('upgrade', (req, socket, head) => {
   const pathname = parse(req.url || '').pathname;
@@ -83,6 +93,17 @@ server.on('upgrade', (req, socket, head) => {
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
+}
+
+function getClientIp(req, socket) {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) {
+    const first = forwarded.split(',')[0].trim();
+    if (first) return first;
+  }
+  if (req.headers['x-real-ip']) return req.headers['x-real-ip'].trim();
+  if (req.headers['cf-connecting-ip']) return req.headers['cf-connecting-ip'].trim();
+  return socket && socket.remoteAddress ? socket.remoteAddress : '?';
 }
 
 function createPty(cols, rows) {
@@ -103,12 +124,13 @@ function getOrCreateSession(sessionParam) {
     const pty = createPty(80, 24);
     const clients = new Set();
     const createdAt = Date.now();
-    const session = { pty, clients, createdAt, name: '', titleBuffer: '' };
+    const session = { pty, clients, createdAt, name: '', titleBuffer: '', outputBuffer: Buffer.alloc(0) };
     sessions.set(id, session);
     lastSessionId = id;
     log(`New session created: ${id}`);
 
     pty.onData((data) => {
+      appendToScrollback(session, data);
       clients.forEach((ws) => {
         if (ws.readyState === 1) ws.send(data);
       });
@@ -154,12 +176,13 @@ function getOrCreateSession(sessionParam) {
     const pty = createPty(80, 24);
     const clients = new Set();
     const createdAt = Date.now();
-    const session = { pty, clients, createdAt, name: '', titleBuffer: '' };
+    const session = { pty, clients, createdAt, name: '', titleBuffer: '', outputBuffer: Buffer.alloc(0) };
     sessions.set(id, session);
     lastSessionId = id;
     log(`New session created: ${id}`);
 
     pty.onData((data) => {
+      appendToScrollback(session, data);
       clients.forEach((ws) => {
         if (ws.readyState === 1) ws.send(data);
       });
@@ -198,9 +221,13 @@ wss.on('connection', (ws, req) => {
   const { id, session } = getOrCreateSession(sessionParam);
   session.clients.add(ws);
 
-  log(`Connection opened: ${clientType}, session: ${id}`);
+  const clientIp = getClientIp(req, req.socket);
+  log(`Connection opened: ${clientType}, session: ${id}, ip: ${clientIp}`);
 
   ws.send(JSON.stringify({ type: 'session', id }) + '\n');
+  if (session.outputBuffer && session.outputBuffer.length > 0) {
+    ws.send(JSON.stringify({ type: 'replay', data: session.outputBuffer.toString('base64') }) + '\n');
+  }
 
   ws.on('message', (msg) => {
     if (!session.pty) return;
@@ -226,7 +253,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    log(`Connection closed: ${clientType}, session: ${id}`);
+    log(`Connection closed: ${clientType}, session: ${id}, ip: ${clientIp}`);
     session.clients.delete(ws);
   });
 });
@@ -251,9 +278,10 @@ function sendTunnelData(ws, channelId, data) {
   ws.send(buf);
 }
 
-tunnelWss.on('connection', (ws) => {
+tunnelWss.on('connection', (ws, req) => {
   const channels = new Map();
-  log('Tunnel connection opened');
+  const clientIp = getClientIp(req, req.socket);
+  log(`Tunnel connection opened, ip: ${clientIp}`);
 
   ws.on('message', (msg) => {
     if (!Buffer.isBuffer(msg)) return;
@@ -293,6 +321,6 @@ tunnelWss.on('connection', (ws) => {
   ws.on('close', () => {
     channels.forEach((sock) => sock.destroy());
     channels.clear();
-    log('Tunnel connection closed');
+    log(`Tunnel connection closed, ip: ${clientIp}`);
   });
 });
