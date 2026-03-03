@@ -265,13 +265,14 @@ app.post('/api/webauthn/register/options', async (req, res) => {
 // WebAuthn: verify registration and save credential
 app.post('/api/webauthn/register/verify', async (req, res) => {
   if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
-  const { body } = req;
+  const body = req.body || {};
   const rpId = getRpId(req);
   const origin = getOrigin(req);
   let expectedChallenge = null;
-  if (body.response && body.response.clientDataJSON) {
+  const clientDataJSON = body?.response?.clientDataJSON;
+  if (clientDataJSON) {
     try {
-      const cd = JSON.parse(Buffer.from(body.response.clientDataJSON, 'base64url').toString());
+      const cd = JSON.parse(Buffer.from(clientDataJSON, 'base64url').toString());
       if (cd.challenge && pendingChallenges.has(cd.challenge)) expectedChallenge = cd.challenge;
     } catch (_) {}
   }
@@ -287,13 +288,13 @@ app.post('/api/webauthn/register/verify', async (req, res) => {
     if (!verification.verified || !verification.registrationInfo) {
       return res.status(400).json({ error: 'Verification failed' });
     }
-    const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+    const { credential } = verification.registrationInfo;
     const data = getAuthData();
     data.credentials = data.credentials || [];
     data.credentials.push({
-      id: Buffer.from(credentialID).toString('base64url'),
-      publicKey: Buffer.from(credentialPublicKey).toString('base64'),
-      counter: counter || 0,
+      id: credential.id,
+      publicKey: Buffer.from(credential.publicKey).toString('base64'),
+      counter: credential.counter || 0,
     });
     saveAuthData(data);
     res.json({ ok: true });
@@ -324,13 +325,14 @@ app.post('/api/webauthn/login/options', async (req, res) => {
 // WebAuthn: verify authentication and set session cookie
 app.post('/api/webauthn/login/verify', async (req, res) => {
   if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
-  const { body } = req;
+  const body = req.body || {};
   const rpId = getRpId(req);
   const origin = getOrigin(req);
   let expectedChallenge = null;
-  if (body.response && body.response.clientDataJSON) {
+  const clientDataJSON = body?.response?.clientDataJSON;
+  if (clientDataJSON) {
     try {
-      const cd = JSON.parse(Buffer.from(body.response.clientDataJSON, 'base64url').toString());
+      const cd = JSON.parse(Buffer.from(clientDataJSON, 'base64url').toString());
       if (cd.challenge && pendingChallenges.has(cd.challenge)) expectedChallenge = cd.challenge;
     } catch (_) {}
   }
