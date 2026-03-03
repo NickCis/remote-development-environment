@@ -227,11 +227,11 @@ app.get('/api/auth-state', (req, res) => {
 const pendingChallenges = new Map();
 
 // WebAuthn: registration options
-app.post('/api/webauthn/register/options', (req, res) => {
+app.post('/api/webauthn/register/options', async (req, res) => {
   if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
   const rpId = getRpId(req);
   const origin = getOrigin(req);
-  const options = generateRegistrationOptions({
+  const options = await generateRegistrationOptions({
     rpName: 'Terminal',
     rpID: rpId === '0.0.0.0' ? 'localhost' : rpId,
     userID: crypto.randomBytes(32),
@@ -289,7 +289,7 @@ app.post('/api/webauthn/register/verify', async (req, res) => {
 });
 
 // WebAuthn: authentication options
-app.post('/api/webauthn/login/options', (req, res) => {
+app.post('/api/webauthn/login/options', async (req, res) => {
   if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
   const data = getAuthData();
   const credentials = (data.credentials || []).map((c) => ({
@@ -297,7 +297,7 @@ app.post('/api/webauthn/login/options', (req, res) => {
     transports: c.transports,
   }));
   const rpId = getRpId(req);
-  const options = generateAuthenticationOptions({
+  const options = await generateAuthenticationOptions({
     rpID: rpId === '0.0.0.0' ? 'localhost' : rpId,
     allowCredentials: credentials.length ? credentials : undefined,
   });
