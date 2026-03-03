@@ -209,9 +209,24 @@ function getRpId(req) {
 }
 
 function getOrigin(req) {
+  // Prefer Origin/Referer from the client so we match what the browser sends in WebAuthn (e.g. with port)
+  const originHeader = req.headers.origin;
+  if (originHeader && /^https?:\/\//i.test(originHeader)) return originHeader;
+  const referer = req.headers.referer;
+  if (referer) {
+    try {
+      const u = new URL(referer);
+      return u.origin;
+    } catch (_) {}
+  }
   const proto = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-  const host = req.headers.host || 'localhost:3000';
-  return `${proto}://${host}`;
+  const hostHeader = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const hostname = hostHeader.split(':')[0];
+  const portFromHeader = req.headers['x-forwarded-port'] || (hostHeader.includes(':') ? hostHeader.split(':')[1] : null);
+  const port = portFromHeader || (proto === 'https' ? '443' : '80');
+  const defaultPort = proto === 'https' ? '443' : '80';
+  if (port === defaultPort) return `${proto}://${hostname}`;
+  return `${proto}://${hostname}:${port}`;
 }
 
 // Auth state for frontend
