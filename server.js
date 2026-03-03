@@ -309,7 +309,7 @@ app.post('/api/webauthn/login/options', async (req, res) => {
   if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
   const data = getAuthData();
   const credentials = (data.credentials || []).map((c) => ({
-    id: Buffer.from(c.id, 'base64url'),
+    id: c.id,
     transports: c.transports,
   }));
   const rpId = getRpId(req);
