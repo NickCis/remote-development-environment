@@ -3,13 +3,26 @@ const net = require('net');
 const { spawn } = require('node-pty');
 const { WebSocketServer } = require('ws');
 const path = require('path');
+const fs = require('fs');
 const { parse } = require('url');
 const crypto = require('crypto');
+const cookieParser = require('cookie-parser');
+const {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
+
+const AUTH_DATA_FILENAME = 'auth-data.json';
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let port = process.env.PORT || 3000;
+  let port = process.env.PORT || 3847;
   let host = '127.0.0.1';
+  let noAuth = false;
+  let setupPasskey = false;
+  let dataDir = process.cwd();
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-p' || a === '--port') {
@@ -21,35 +34,352 @@ function parseArgs() {
       else if (v) host = v;
     } else if (a === '--all') {
       host = '0.0.0.0';
+    } else if (a === '--no-auth') {
+      noAuth = true;
+    } else if (a === '--setup-passkey') {
+      setupPasskey = true;
+    } else if (a === '--data-dir') {
+      const v = args[++i];
+      if (v) dataDir = path.resolve(v);
     } else if (a === '-h' || a === '--help') {
       console.log(`
 Usage: node server.js [options]
 
 Options:
-  -p, --port <number>   Port to listen on (default: 3000 or PORT env)
+  -p, --port <number>   Port to listen on (default: 3847 or PORT env)
   -H, --host <address>  Host to bind: 127.0.0.1 (local only), 0.0.0.0 (all interfaces), or an IP
   --all                 Shorthand for --host 0.0.0.0 (listen on all interfaces / local network)
+  --no-auth             Run without authentication (no passkey or token required)
+  --setup-passkey       Web UI only for passkey registration (no terminal access)
+  --data-dir <path>     Directory for auth data and PTY cwd (default: current working directory)
   -h, --help            Show this help
 
 Examples:
   node server.js --port 8080
   node server.js --all
-  node server.js --host 0.0.0.0 -p 3000
+  node server.js --data-dir ./data
+  node server.js --setup-passkey --data-dir ./data
 `);
       process.exit(0);
     }
   }
-  return { port, host };
+  return { port, host, noAuth, setupPasskey, dataDir };
 }
 
-const { port: PORT, host: HOST } = parseArgs();
+const { port: PORT, host: HOST, noAuth: AUTH_DISABLED, setupPasskey: SETUP_PASSKEY, dataDir: DATA_DIR } = parseArgs();
 const app = express();
 app.set('trust proxy', true);
+app.use(express.json());
+app.use(cookieParser());
 
 const sessions = new Map();
 let lastSessionId = null;
 
-app.get('/api/sessions', (_req, res) => {
+// --- Auth storage (JSON file in DATA_DIR) ---
+function getAuthDataPath() {
+  return path.join(DATA_DIR, AUTH_DATA_FILENAME);
+}
+
+function loadAuthData() {
+  const filePath = getAuthDataPath();
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data.credentials)) data.credentials = [];
+    if (!data.tokens || typeof data.tokens !== 'object') data.tokens = {};
+    if (!data.sessionSecret || typeof data.sessionSecret !== 'string') {
+      data.sessionSecret = crypto.randomBytes(32).toString('hex');
+      saveAuthData(data);
+    }
+    return data;
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      const data = {
+        credentials: [],
+        tokens: {},
+        sessionSecret: crypto.randomBytes(32).toString('hex'),
+      };
+      saveAuthData(data);
+      return data;
+    }
+    throw e;
+  }
+}
+
+function saveAuthData(data) {
+  const filePath = getAuthDataPath();
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  } catch (_) {}
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+}
+
+let authData = null;
+function getAuthData() {
+  if (!authData) authData = loadAuthData();
+  return authData;
+}
+
+function refreshAuthData() {
+  authData = loadAuthData();
+  return authData;
+}
+
+function tokenHash(token) {
+  return crypto.createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function addToken(token) {
+  const data = getAuthData();
+  data.tokens[tokenHash(token)] = { createdAt: new Date().toISOString() };
+  saveAuthData(data);
+}
+
+function validateToken(token) {
+  if (!token || typeof token !== 'string') return false;
+  const data = getAuthData();
+  return Object.prototype.hasOwnProperty.call(data.tokens, tokenHash(token));
+}
+
+const SESSION_COOKIE_NAME = 'terminal_session';
+const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
+function signSession(payload) {
+  const data = getAuthData();
+  const payloadStr = JSON.stringify(payload);
+  const sig = crypto.createHmac('sha256', data.sessionSecret).update(payloadStr).digest('hex');
+  return Buffer.from(payloadStr + '.' + sig).toString('base64url');
+}
+
+function verifySession(cookieValue) {
+  if (!cookieValue) return null;
+  try {
+    const decoded = Buffer.from(cookieValue, 'base64url').toString('utf8');
+    const dot = decoded.indexOf('.');
+    if (dot === -1) return null;
+    const payloadStr = decoded.slice(0, dot);
+    const sig = decoded.slice(dot + 1);
+    const data = getAuthData();
+    const expected = crypto.createHmac('sha256', data.sessionSecret).update(payloadStr).digest('hex');
+    if (sig !== expected) return null;
+    const payload = JSON.parse(payloadStr);
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch (_) {
+    return null;
+  }
+}
+
+function getCookie(req, name) {
+  if (req.cookies && req.cookies[name]) return req.cookies[name];
+  const raw = req.headers.cookie;
+  if (!raw) return undefined;
+  const match = new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)').exec(raw);
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
+function getClientAuth(req) {
+  const cookie = getCookie(req, SESSION_COOKIE_NAME);
+  if (cookie) {
+    const session = verifySession(cookie);
+    if (session) return { type: 'session', session };
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (validateToken(token)) return { type: 'token' };
+  }
+  const { query } = parse(req.url || '', true);
+  const tokenFromQuery = query && query.token;
+  if (tokenFromQuery && validateToken(tokenFromQuery)) return { type: 'token' };
+  return null;
+}
+
+function requireAuth(req, res, next) {
+  if (AUTH_DISABLED) return next();
+  const auth = getClientAuth(req);
+  if (auth) return next();
+  res.status(401).json({ error: 'Unauthorized' });
+}
+
+function getRpId(req) {
+  const host = req.headers.host || '';
+  const rpId = host.split(':')[0] || 'localhost';
+  return rpId;
+}
+
+function getOrigin(req) {
+  const proto = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  const host = req.headers.host || 'localhost:3000';
+  return `${proto}://${host}`;
+}
+
+// Auth state for frontend
+app.get('/api/auth-state', (req, res) => {
+  const authRequired = !AUTH_DISABLED;
+  const setupMode = SETUP_PASSKEY;
+  const loggedIn = !!getClientAuth(req);
+  const hasCredentials = (getAuthData().credentials || []).length > 0;
+  res.json({ authRequired, setupMode, loggedIn, hasCredentials });
+});
+
+// In-memory challenge store (keyed by challenge so we can look up in verify)
+const pendingChallenges = new Map();
+
+// WebAuthn: registration options
+app.post('/api/webauthn/register/options', (req, res) => {
+  if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
+  const rpId = getRpId(req);
+  const origin = getOrigin(req);
+  const options = generateRegistrationOptions({
+    rpName: 'Terminal',
+    rpID: rpId === '0.0.0.0' ? 'localhost' : rpId,
+    userID: crypto.randomBytes(32),
+    userName: 'user',
+    attestationType: 'none',
+    authenticatorSelection: {
+      residentKey: 'preferred',
+      userVerification: 'preferred',
+    },
+  });
+  pendingChallenges.set(options.challenge, { type: 'register' });
+  setTimeout(() => pendingChallenges.delete(options.challenge), 5 * 60 * 1000);
+  res.json(options);
+});
+
+// WebAuthn: verify registration and save credential
+app.post('/api/webauthn/register/verify', async (req, res) => {
+  if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
+  const { body } = req;
+  const rpId = getRpId(req);
+  const origin = getOrigin(req);
+  let expectedChallenge = null;
+  if (body.response && body.response.clientDataJSON) {
+    try {
+      const cd = JSON.parse(Buffer.from(body.response.clientDataJSON, 'base64url').toString());
+      if (cd.challenge && pendingChallenges.has(cd.challenge)) expectedChallenge = cd.challenge;
+    } catch (_) {}
+  }
+  if (!expectedChallenge) return res.status(400).json({ error: 'No challenge' });
+  try {
+    const verification = await verifyRegistrationResponse({
+      response: body,
+      expectedChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpId === '0.0.0.0' ? 'localhost' : rpId,
+    });
+    pendingChallenges.delete(expectedChallenge);
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: 'Verification failed' });
+    }
+    const { credentialID, credentialPublicKey, counter } = verification.registrationInfo;
+    const data = getAuthData();
+    data.credentials = data.credentials || [];
+    data.credentials.push({
+      id: Buffer.from(credentialID).toString('base64url'),
+      publicKey: Buffer.from(credentialPublicKey).toString('base64'),
+      counter: counter || 0,
+    });
+    saveAuthData(data);
+    res.json({ ok: true });
+  } catch (e) {
+    if (expectedChallenge) pendingChallenges.delete(expectedChallenge);
+    res.status(400).json({ error: e.message || 'Verification failed' });
+  }
+});
+
+// WebAuthn: authentication options
+app.post('/api/webauthn/login/options', (req, res) => {
+  if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
+  const data = getAuthData();
+  const credentials = (data.credentials || []).map((c) => ({
+    id: Buffer.from(c.id, 'base64url'),
+    transports: c.transports,
+  }));
+  const rpId = getRpId(req);
+  const options = generateAuthenticationOptions({
+    rpID: rpId === '0.0.0.0' ? 'localhost' : rpId,
+    allowCredentials: credentials.length ? credentials : undefined,
+  });
+  pendingChallenges.set(options.challenge, { type: 'login' });
+  setTimeout(() => pendingChallenges.delete(options.challenge), 5 * 60 * 1000);
+  res.json(options);
+});
+
+// WebAuthn: verify authentication and set session cookie
+app.post('/api/webauthn/login/verify', async (req, res) => {
+  if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
+  const { body } = req;
+  const rpId = getRpId(req);
+  const origin = getOrigin(req);
+  let expectedChallenge = null;
+  if (body.response && body.response.clientDataJSON) {
+    try {
+      const cd = JSON.parse(Buffer.from(body.response.clientDataJSON, 'base64url').toString());
+      if (cd.challenge && pendingChallenges.has(cd.challenge)) expectedChallenge = cd.challenge;
+    } catch (_) {}
+  }
+  if (!expectedChallenge) return res.status(400).json({ error: 'No challenge' });
+  const data = getAuthData();
+  const storedCreds = data.credentials || [];
+  const credentialIdStr = body.id || body.rawId;
+  if (!credentialIdStr) {
+    pendingChallenges.delete(expectedChallenge);
+    return res.status(400).json({ error: 'Missing credential id' });
+  }
+  const stored = storedCreds.find((c) => c.id === credentialIdStr);
+  if (!stored) {
+    pendingChallenges.delete(expectedChallenge);
+    return res.status(400).json({ error: 'Unknown credential' });
+  }
+  const credential = {
+    id: stored.id,
+    publicKey: Buffer.from(stored.publicKey, 'base64'),
+    counter: stored.counter || 0,
+  };
+  try {
+    const verification = await verifyAuthenticationResponse({
+      response: body,
+      expectedChallenge,
+      expectedOrigin: origin,
+      expectedRPID: rpId === '0.0.0.0' ? 'localhost' : rpId,
+      credential,
+    });
+    pendingChallenges.delete(expectedChallenge);
+    if (!verification.verified) return res.status(400).json({ error: 'Verification failed' });
+    const newCounter = verification.authenticationInfo?.newCounter ?? credential.counter;
+    const idx = storedCreds.findIndex((c) => c.id === credentialIdStr);
+    if (idx !== -1) {
+      authData = getAuthData();
+      authData.credentials[idx].counter = newCounter;
+      saveAuthData(authData);
+    }
+    const payload = { id: crypto.randomUUID(), exp: Date.now() + SESSION_EXPIRY_MS };
+    const cookieValue = signSession(payload);
+    res.cookie(SESSION_COOKIE_NAME, cookieValue, {
+      httpOnly: true,
+      secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+      sameSite: 'lax',
+      maxAge: SESSION_EXPIRY_MS,
+      path: '/',
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    pendingChallenges.delete(expectedChallenge);
+    res.status(400).json({ error: e.message || 'Verification failed' });
+  }
+});
+
+// Generate CLI token (requires auth; disabled when --no-auth)
+app.post('/api/token', (req, res) => {
+  if (AUTH_DISABLED) return res.status(400).json({ error: 'Auth disabled' });
+  if (!getClientAuth(req)) return res.status(401).json({ error: 'Unauthorized' });
+  const token = crypto.randomBytes(32).toString('base64url');
+  addToken(token);
+  res.json({ token });
+});
+
+app.get('/api/sessions', requireAuth, (_req, res) => {
   const list = [];
   for (const [id, s] of sessions) {
     list.push({ id, createdAt: new Date(s.createdAt).toISOString(), name: s.name || '' });
@@ -60,8 +390,10 @@ app.get('/api/sessions', (_req, res) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 const server = app.listen(PORT, HOST, () => {
-  const addr = HOST === '0.0.0.0' ? `http://0.0.0.0:${PORT}` : `http://${HOST}:${PORT}`;
-  console.log(`Server running at ${addr}`);
+  const network = HOST === '0.0.0.0' ? 'all interfaces (0.0.0.0)' : HOST;
+  console.log(`Listening on port ${PORT} (${network})`);
+  console.log(`Auth required: ${AUTH_DISABLED ? 'no' : 'yes'}`);
+  console.log(`CWD (data dir): ${DATA_DIR}`);
 });
 
 const wss = new WebSocketServer({ noServer: true });
@@ -80,6 +412,13 @@ function appendToScrollback(session, data) {
 
 server.on('upgrade', (req, socket, head) => {
   const pathname = parse(req.url || '').pathname;
+  const auth = getClientAuth(req);
+  const authRequired = !AUTH_DISABLED && (pathname === '/tunnel' || pathname === '/' || pathname === '');
+  if (authRequired && !auth) {
+    socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
   if (pathname === '/tunnel') {
     tunnelWss.handleUpgrade(req, socket, head, (ws) => {
       tunnelWss.emit('connection', ws, req);
@@ -111,7 +450,7 @@ function createPty(cols, rows) {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
-    cwd: process.cwd(),
+    cwd: DATA_DIR,
     env: process.env,
   });
 }

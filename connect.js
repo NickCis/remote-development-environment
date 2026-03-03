@@ -4,7 +4,22 @@ const http = require('http');
 const https = require('https');
 
 const flags = ['--list', '-l', '--resize', '--help', '-h'];
-const positional = process.argv.slice(2).filter((a) => !flags.includes(a));
+let tokenValue = process.env.TERMINAL_TOKEN || '';
+const rawArgs = process.argv.slice(2);
+const positional = [];
+for (let i = 0; i < rawArgs.length; i++) {
+  const a = rawArgs[i];
+  if (a === '--token') {
+    if (i + 1 < rawArgs.length) tokenValue = rawArgs[++i];
+    continue;
+  }
+  if (a.startsWith('--token=')) {
+    tokenValue = a.slice(7);
+    continue;
+  }
+  if (flags.includes(a)) continue;
+  positional.push(a);
+}
 const doHelp = process.argv.includes('--help') || process.argv.includes('-h');
 const doList = process.argv.includes('--list') || process.argv.includes('-l');
 const doResize = process.argv.includes('--resize');
@@ -30,10 +45,11 @@ if (positional.length >= 2) {
   }
 }
 
-let baseUrl = process.env.TERMINAL_URL || 'ws://localhost:3000';
+const DEFAULT_PORT = '3847';
+let baseUrl = process.env.TERMINAL_URL || 'ws://localhost:' + DEFAULT_PORT;
 if (serverSpec) {
   const host = serverSpec.includes(':') ? serverSpec.slice(0, serverSpec.indexOf(':')) : serverSpec;
-  const port = serverSpec.includes(':') ? serverSpec.slice(serverSpec.indexOf(':') + 1) : '3000';
+  const port = serverSpec.includes(':') ? serverSpec.slice(serverSpec.indexOf(':') + 1) : DEFAULT_PORT;
   baseUrl = `ws://${host}:${port}`;
 }
 
@@ -44,12 +60,13 @@ Attach to a terminal session (shared with the web UI). If session is omitted,
 attaches to the last used session or creates a new one.
 
 Arguments:
-  host[:port]   Server host and optional port (default port 3000)
+  host[:port]   Server host and optional port (default port 3847)
   session       Session UUID to attach to, or "new" to create a new session
 
 Options:
   -l, --list     List active session IDs and exit (no TTY required)
   --resize       Reset PTY size to current terminal dimensions on connect
+  --token <t>    Auth token; use --token=VAL or TERMINAL_TOKEN; required if server uses auth
   -h, --help     Show this help
 
 Key bindings (while attached):
@@ -57,15 +74,17 @@ Key bindings (while attached):
   Ctrl+^ r     Resize (send current terminal size to PTY)
 
 Environment:
-  TERMINAL_URL   WebSocket URL of the server (default: ws://localhost:3000)
+  TERMINAL_URL   WebSocket URL of the server (default: ws://localhost:3847)
+  TERMINAL_TOKEN Auth token when server uses passkey/token auth
 
 Examples:
   connect                        # last session, or new
   connect new                    # new session
-  connect 192.168.1.1:3000 new  # server and new session
+  connect 192.168.1.1:3847 new  # server and new session
   connect localhost  <uuid>      # server and session
   connect --list                 # list sessions
   connect --resize new           # new session and reset PTY size
+  connect --token <token> new    # connect with auth token
 `;
 
 if (doHelp) {
@@ -76,8 +95,11 @@ if (doHelp) {
 if (doList) {
   const apiUrl = baseUrl.replace(/^ws/, 'http').replace(/^wss/, 'https');
   const u = new URL('/api/sessions', apiUrl);
+  if (tokenValue) u.searchParams.set('token', tokenValue);
+  const opts = { headers: {} };
+  if (tokenValue) opts.headers.Authorization = 'Bearer ' + tokenValue;
   const client = u.protocol === 'https:' ? https : http;
-  client.get(u.toString(), (res) => {
+  client.get(u.toString(), opts, (res) => {
     let body = '';
     res.on('data', (c) => { body += c; });
     res.on('end', () => {
@@ -109,7 +131,8 @@ if (!process.stdin.isTTY) {
 }
 
 const sep = baseUrl.includes('?') ? '&' : '?';
-const url = `${baseUrl}${sep}session=${encodeURIComponent(sessionParam)}&client=cli`;
+let url = `${baseUrl}${sep}session=${encodeURIComponent(sessionParam)}&client=cli`;
+if (tokenValue) url += '&token=' + encodeURIComponent(tokenValue);
 
 const ws = new WebSocket(url);
 

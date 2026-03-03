@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Port forwarding client: listen on local ports and forward TCP over WebSocket to the server.
-Usage: python tunnel.py [host:port] port1 [port2 ...]
-  host:port default: localhost:3000. Remaining args are local ports to listen on.
+Usage: python tunnel.py [options] [host:port] port1 [port2 ...]
+  host:port default: localhost:3847. Remaining args are local ports to listen on.
+  --token TOKEN  Auth token; use --token=VAL or TERMINAL_TOKEN; required if server uses auth.
 Example: python tunnel.py 8080 9090
-         python tunnel.py 192.168.1.1:3000 8080
+         python tunnel.py 192.168.1.1:3847 8080
+         python tunnel.py --token <token> 8080
 """
 import asyncio
 import base64
@@ -12,16 +14,36 @@ import hashlib
 import os
 import struct
 import sys
+from urllib.parse import quote
 
 
 def parse_args():
     args = sys.argv[1:]
     if not args:
-        print("Usage: python tunnel.py [host:port] port1 [port2 ...]", file=sys.stderr)
+        print("Usage: python tunnel.py [options] [host:port] port1 [port2 ...]", file=sys.stderr)
         sys.exit(1)
+    token = os.environ.get("TERMINAL_TOKEN", "")
+    new_args = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--token":
+            if i + 1 < len(args):
+                token = args[i + 1]
+                i += 2
+                continue
+            i += 1
+            continue
+        if a.startswith("--token="):
+            token = a[8:]
+            i += 1
+            continue
+        new_args.append(a)
+        i += 1
+    args = new_args
     host = "localhost"
-    port = 3000
-    if ":" in args[0] or "." in args[0] or args[0].isalpha():
+    port = 3847
+    if args and (":" in args[0] or "." in args[0] or args[0].isalpha()):
         host_port = args[0]
         args = args[1:]
         if ":" in host_port:
@@ -37,7 +59,7 @@ def parse_args():
     if not ports:
         print("At least one port to forward is required", file=sys.stderr)
         sys.exit(1)
-    return host, port, ports
+    return host, port, ports, token
 
 
 # --- Minimal WebSocket client (stdlib) ---
@@ -144,7 +166,7 @@ def parse_message(data: bytes):
     return None, data
 
 
-async def run_tunnel(host: str, port: int, ports: list):
+async def run_tunnel(host: str, port: int, ports: list, token: str = ""):
     next_channel_id = 1
     channels = {}
     ws_reader = None
@@ -158,15 +180,20 @@ async def run_tunnel(host: str, port: int, ports: list):
         key_bin = (key_b64 + WS_MAGIC).encode("ascii")
         accept = hashlib.sha1(key_bin).digest()
         accept_b64 = base64.b64encode(accept).decode("ascii")
+        path = "/tunnel"
+        if token:
+            path += "?token=" + quote(token, safe="")
         req = (
-            f"GET /tunnel HTTP/1.1\r\n"
+            f"GET {path} HTTP/1.1\r\n"
             f"Host: {host}:{port}\r\n"
             f"Upgrade: websocket\r\n"
             f"Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key_b64}\r\n"
             f"Sec-WebSocket-Version: 13\r\n"
-            f"\r\n"
         )
+        if token:
+            req += f"Authorization: Bearer {token}\r\n"
+        req += "\r\n"
         reader, writer = await asyncio.open_connection(host, port)
         writer.write(req.encode("ascii"))
         await writer.drain()
@@ -316,8 +343,8 @@ async def run_tunnel(host: str, port: int, ports: list):
 
 
 def main():
-    host, port, ports = parse_args()
-    asyncio.run(run_tunnel(host, port, ports))
+    host, port, ports, token = parse_args()
+    asyncio.run(run_tunnel(host, port, ports, token))
 
 
 if __name__ == "__main__":

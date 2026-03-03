@@ -91,9 +91,22 @@
     }
     #toast.show { display: block; animation: toast-in 0.2s ease; }
     @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+    #auth-screen { display: none; position: fixed; inset: 0; z-index: 200; background: #0d1117; flex-direction: column; align-items: center; justify-content: center; padding: 24px; }
+    #auth-screen.visible { display: flex; }
+    #auth-screen h1 { color: #c9d1d9; font-size: 1.5rem; margin: 0 0 16px; font-weight: 600; }
+    #auth-screen p { color: #8b949e; margin: 0 0 24px; text-align: center; max-width: 360px; }
+    #auth-screen .auth-btn { padding: 12px 24px; font-size: 16px; border-radius: 8px; border: 1px solid #30363d; background: #21262d; color: #c9d1d9; cursor: pointer; font-family: inherit; }
+    #auth-screen .auth-btn:hover { background: #30363d; }
+    #auth-screen .auth-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    #auth-screen .error { color: #f85149; margin-top: 12px; font-size: 14px; }
+    #auth-screen .token-box { margin-top: 16px; padding: 12px; background: #21262d; border-radius: 8px; word-break: break-all; font-size: 12px; color: #8b949e; max-width: 100%; }
+    #auth-screen .token-actions { margin-top: 8px; }
   </style>
 </head>
 <body>
+  <div id="auth-screen">
+    <div id="auth-content"></div>
+  </div>
   <div id="toast" aria-live="polite"></div>
   <button type="button" class="float-btn left" id="sessions-btn" title="Sessions">≡</button>
   <div class="menu left" id="sessions-menu"></div>
@@ -107,6 +120,7 @@
 
   <div id="special-keyboard"></div>
 
+  <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
   <script src="app.js"></script>

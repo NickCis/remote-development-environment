@@ -13,3 +13,4 @@ build/
 .nyc_output/
 coverage/
 .cursor
+auth-data.json

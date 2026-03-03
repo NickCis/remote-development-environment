@@ -8,6 +8,8 @@
     "connect": "node connect.js"
   },
   "dependencies": {
+    "@simplewebauthn/server": "^13.0.0",
+    "cookie-parser": "^1.4.6",
     "express": "^4.21.0",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"

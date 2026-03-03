@@ -3,11 +3,106 @@ function getSessionParam() {
   return params.get('session') || '';
 }
 
-const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-let sessionParam = getSessionParam();
-let wsUrl = `${protocol}//${location.host}?session=${encodeURIComponent(sessionParam)}`;
+function showAuthScreen(title, bodyHtml, primaryLabel, onPrimary) {
+  const screen = document.getElementById('auth-screen');
+  const content = document.getElementById('auth-content');
+  if (!screen || !content) return;
+  content.innerHTML = '<h1>' + title + '</h1><p>' + bodyHtml + '</p><button type="button" class="auth-btn" id="auth-primary">' + primaryLabel + '</button><div class="error" id="auth-error"></div>';
+  screen.classList.add('visible');
+  const btn = document.getElementById('auth-primary');
+  const errEl = document.getElementById('auth-error');
+  if (btn) btn.onclick = () => { errEl.textContent = ''; onPrimary(btn, errEl); };
+}
 
-const term = new Terminal({
+function showSetupScreen() {
+  showAuthScreen(
+    'Register passkey',
+    'Create a passkey to secure this terminal. You will use it to sign in.',
+    'Create passkey',
+    async (btn, errEl) => {
+      btn.disabled = true;
+      try {
+        const optRes = await fetch('/api/webauthn/register/options', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        if (!optRes.ok) throw new Error('Failed to get options');
+        const options = await optRes.json();
+        const { startRegistration } = SimpleWebAuthnBrowser;
+        const cred = await startRegistration(options);
+        const verifyRes = await fetch('/api/webauthn/register/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cred),
+        });
+        if (!verifyRes.ok) {
+          const e = await verifyRes.json().catch(() => ({}));
+          throw new Error(e.error || 'Verification failed');
+        }
+        errEl.textContent = '';
+        errEl.style.color = '#3fb950';
+        errEl.textContent = 'Passkey created. You can now run the server without --setup-passkey and sign in.';
+      } catch (e) {
+        errEl.textContent = e.message || 'Failed';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  );
+}
+
+function showLoginScreen() {
+  showAuthScreen(
+    'Sign in',
+    'Use your passkey to sign in.',
+    'Sign in with passkey',
+    async (btn, errEl) => {
+      btn.disabled = true;
+      try {
+        const optRes = await fetch('/api/webauthn/login/options', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        if (!optRes.ok) throw new Error('Failed to get options');
+        const options = await optRes.json();
+        const { startAuthentication } = SimpleWebAuthnBrowser;
+        const cred = await startAuthentication(options);
+        const verifyRes = await fetch('/api/webauthn/login/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(cred),
+          credentials: 'include',
+        });
+        if (!verifyRes.ok) {
+          const e = await verifyRes.json().catch(() => ({}));
+          throw new Error(e.error || 'Verification failed');
+        }
+        location.reload();
+      } catch (e) {
+        errEl.textContent = e.message || 'Failed';
+        btn.disabled = false;
+      }
+    }
+  );
+}
+
+async function initApp() {
+  let authState = {};
+  try {
+    authState = await fetch('/api/auth-state').then((r) => r.json());
+  } catch (_) {}
+  if (authState.setupMode) {
+    showSetupScreen();
+    return;
+  }
+  if (authState.authRequired && !authState.loggedIn) {
+    showLoginScreen();
+    return;
+  }
+  initTerminal();
+}
+
+async function initTerminal() {
+  const authState = await fetch('/api/auth-state').then((r) => r.json()).catch(() => ({}));
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  let sessionParam = getSessionParam();
+  let wsUrl = `${protocol}//${location.host}?session=${encodeURIComponent(sessionParam)}`;
+
+  const term = new Terminal({
   fontFamily: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace",
   cursorBlink: true,
   theme: {
@@ -419,6 +514,32 @@ resizeBtn.onclick = () => { sendResize(); };
 resizeRow.appendChild(resizeBtn);
 toolboxMenu.appendChild(resizeRow);
 
+const tokenRow = document.createElement('div');
+tokenRow.className = 'toolbox-row';
+tokenRow.innerHTML = '<label>CLI</label>';
+const tokenBtn = document.createElement('button');
+tokenBtn.className = 'key-btn';
+tokenBtn.textContent = 'Generate CLI token';
+tokenBtn.type = 'button';
+tokenBtn.onclick = async () => {
+  try {
+    const res = await fetch('/api/token', { method: 'POST', credentials: 'include' });
+    if (!res.ok) throw new Error('Failed');
+    const { token } = await res.json();
+    showToast('Token copied to clipboard', 4000);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(token);
+    } else {
+      showToast('Token: ' + token.slice(0, 16) + '… (copy from console)', 8000);
+      console.log('CLI token (use with --token):', token);
+    }
+  } catch (_) {
+    showToast('Failed to generate token', 4000);
+  }
+};
+tokenRow.appendChild(tokenBtn);
+  if (authState.authRequired) toolboxMenu.appendChild(tokenRow);
+
 let autoResize = true;
 let viewportRaf = null;
 function onViewportChange() {
@@ -734,3 +855,6 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('scroll', positionFloatingUI);
 }
 window.addEventListener('resize', positionFloatingUI);
+}
+
+initApp();
