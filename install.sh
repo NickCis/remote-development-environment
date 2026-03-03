@@ -21,10 +21,10 @@ else
 fi
 
 INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd)"
-DATA_DIR="${DATA_DIR:-$HOME}"
+CWD_PATH="${CWD:-$HOME}"
+AUTH_FILE_PATH="${AUTH_FILE:-$HOME/.config/remote-development-environment-auth.json}"
 
 echo "Installing in: $INSTALL_DIR"
-echo "Data dir (auth, cwd): $DATA_DIR"
 
 # Node.js check
 if ! command -v node &>/dev/null; then
@@ -38,9 +38,15 @@ cd "$INSTALL_DIR"
 npm install
 
 if [[ "$DO_SYSTEMD" -eq 1 ]]; then
+  NODE_PATH="$(command -v node)"
+  if [[ -z "$NODE_PATH" ]]; then
+    echo "Could not find node in PATH for systemd service." >&2
+    exit 1
+  fi
   mkdir -p "$HOME/.config/systemd/user"
   SVC_FILE="$HOME/.config/systemd/user/remote-development-environment.service"
-  sed -e "s|INSTALL_DIR|$INSTALL_DIR|g" -e "s|DATA_DIR|$DATA_DIR|g" \
+  echo "Service: cwd=$CWD_PATH, auth-file=$AUTH_FILE_PATH"
+  sed -e "s|INSTALL_DIR|$INSTALL_DIR|g" -e "s|CWD_PATH|$CWD_PATH|g" -e "s|AUTH_FILE_PATH|$AUTH_FILE_PATH|g" -e "s|NODE_PATH|$NODE_PATH|g" \
     "$INSTALL_DIR/remote-development-environment.service" > "$SVC_FILE"
   echo "Installed user service: $SVC_FILE"
   systemctl --user daemon-reload

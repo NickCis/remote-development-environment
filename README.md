@@ -48,10 +48,10 @@ Useful commands:
 - `systemctl --user status remote-development-environment`
 - `journalctl --user -u remote-development-environment -f`
 
-By default the install script uses your home directory (`$HOME`) for auth and PTY cwd. Override with `DATA_DIR` to use another path:
+By default the systemd service uses your home directory as the PTY cwd and `~/.config/remote-development-environment-auth.json` as the auth file. Override with `CWD` and/or `AUTH_FILE`:
 
 ```bash
-DATA_DIR=/path/to/custom/data ./install.sh --systemd
+CWD=/path/to/cwd AUTH_FILE=/path/to/auth.json ./install.sh --systemd
 ```
 
 ---
@@ -80,14 +80,14 @@ When you run **without** `--no-auth`, the server expects either:
 1. Run the server in setup mode (web UI is only for registering a passkey):
 
    ```bash
-   node server.js --setup-passkey --data-dir ./data --all
+   node server.js --setup-passkey --cwd . --auth-file ./auth-data.json --all
    ```
 
 2. Open the app in the browser. You’ll see “Register passkey”. Click **Create passkey** and complete the flow (e.g. Touch ID, Windows Hello, or a security key).
 3. After “Passkey created”, stop the server and run it **without** `--setup-passkey`:
 
    ```bash
-   node server.js --data-dir ./data --all
+   node server.js --cwd . --auth-file ./auth-data.json --all
    ```
 
 **Normal use (browser):**
@@ -111,7 +111,7 @@ The CLI cannot do passkey login. You use a **token** that the server issues afte
    python tunnel.py --token YOUR_TOKEN 8080
    ```
 
-Tokens are stored (as hashes) in the same data directory as the passkey (`auth-data.json`). They don’t expire unless you delete them from that file.
+Tokens are stored (as hashes) in the auth file (same file as passkey credentials). They don’t expire unless you delete them from that file.
 
 **Summary:**
 
@@ -138,7 +138,8 @@ Then open http://localhost:3847 in your browser (default port is **3847**). You 
 - `-H, --host` / `--all` — bind address (`--all` = 0.0.0.0)
 - `--no-auth` — no passkey or token
 - `--setup-passkey` — web UI only for passkey registration
-- `--data-dir <path>` — where auth data and PTY cwd live (default: current directory)
+- `--cwd <path>` — working directory for the server / PTY (default: current directory)
+- `--auth-file <path>` — path to auth JSON file (default: `auth-data.json` in cwd)
 
 ---
 

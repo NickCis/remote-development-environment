@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=INSTALL_DIR
-ExecStart=node server.js --data-dir DATA_DIR --all
+ExecStart=NODE_PATH server.js --cwd CWD_PATH --auth-file AUTH_FILE_PATH --all
 Restart=on-failure
 RestartSec=5
 # Optional: set PORT to listen on a different port (default 3847)

@@ -22,7 +22,8 @@ function parseArgs() {
   let host = '127.0.0.1';
   let noAuth = false;
   let setupPasskey = false;
-  let dataDir = process.cwd();
+  let cwd = process.cwd();
+  let authFile = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-p' || a === '--port') {
@@ -38,9 +39,12 @@ function parseArgs() {
       noAuth = true;
     } else if (a === '--setup-passkey') {
       setupPasskey = true;
-    } else if (a === '--data-dir') {
+    } else if (a === '--cwd') {
       const v = args[++i];
-      if (v) dataDir = path.resolve(v);
+      if (v) cwd = path.resolve(v);
+    } else if (a === '--auth-file') {
+      const v = args[++i];
+      if (v) authFile = path.resolve(v);
     } else if (a === '-h' || a === '--help') {
       console.log(`
 Usage: node server.js [options]
@@ -51,22 +55,24 @@ Options:
   --all                 Shorthand for --host 0.0.0.0 (listen on all interfaces / local network)
   --no-auth             Run without authentication (no passkey or token required)
   --setup-passkey       Web UI only for passkey registration (no terminal access)
-  --data-dir <path>     Directory for auth data and PTY cwd (default: current working directory)
+  --cwd <path>          Working directory for the server / PTY (default: current working directory)
+  --auth-file <path>    Path to auth JSON file (default: auth-data.json in cwd)
   -h, --help            Show this help
 
 Examples:
   node server.js --port 8080
   node server.js --all
-  node server.js --data-dir ./data
-  node server.js --setup-passkey --data-dir ./data
+  node server.js --cwd /home/user --auth-file /home/user/.config/my-auth.json
+  node server.js --setup-passkey --cwd .
 `);
       process.exit(0);
     }
   }
-  return { port, host, noAuth, setupPasskey, dataDir };
+  if (authFile === null) authFile = path.join(cwd, AUTH_DATA_FILENAME);
+  return { port, host, noAuth, setupPasskey, cwd, authFile };
 }
 
-const { port: PORT, host: HOST, noAuth: AUTH_DISABLED, setupPasskey: SETUP_PASSKEY, dataDir: DATA_DIR } = parseArgs();
+const { port: PORT, host: HOST, noAuth: AUTH_DISABLED, setupPasskey: SETUP_PASSKEY, cwd: CWD, authFile: AUTH_FILE } = parseArgs();
 const app = express();
 app.set('trust proxy', true);
 app.use(express.json());
@@ -75,9 +81,9 @@ app.use(cookieParser());
 const sessions = new Map();
 let lastSessionId = null;
 
-// --- Auth storage (JSON file in DATA_DIR) ---
+// --- Auth storage (JSON file at AUTH_FILE) ---
 function getAuthDataPath() {
-  return path.join(DATA_DIR, AUTH_DATA_FILENAME);
+  return AUTH_FILE;
 }
 
 function loadAuthData() {
@@ -410,7 +416,8 @@ const server = app.listen(PORT, HOST, () => {
   const network = HOST === '0.0.0.0' ? 'all interfaces (0.0.0.0)' : HOST;
   console.log(`Listening on port ${PORT} (${network})`);
   console.log(`Auth required: ${AUTH_DISABLED ? 'no' : 'yes'}`);
-  console.log(`CWD (data dir): ${DATA_DIR}`);
+  console.log(`CWD: ${CWD}`);
+  console.log(`Auth file: ${AUTH_FILE}`);
 });
 
 const wss = new WebSocketServer({ noServer: true });
@@ -467,7 +474,7 @@ function createPty(cols, rows) {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
-    cwd: DATA_DIR,
+    cwd: CWD,
     env: process.env,
   });
 }
