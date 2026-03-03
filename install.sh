@@ -21,7 +21,7 @@ else
 fi
 
 INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd)"
-DATA_DIR="${DATA_DIR:-$HOME/.config/remote-dev-env}"
+DATA_DIR="${DATA_DIR:-$HOME}"
 
 echo "Installing in: $INSTALL_DIR"
 echo "Data dir (auth, cwd): $DATA_DIR"

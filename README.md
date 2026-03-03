@@ -48,7 +48,7 @@ Useful commands:
 - `systemctl --user status remote-development-environment`
 - `journalctl --user -u remote-development-environment -f`
 
-By default the install script uses `~/.config/remote-dev-env` for auth and PTY cwd. Override with `DATA_DIR` to use another path:
+By default the install script uses your home directory (`$HOME`) for auth and PTY cwd. Override with `DATA_DIR` to use another path:
 
 ```bash
 DATA_DIR=/path/to/custom/data ./install.sh --systemd
