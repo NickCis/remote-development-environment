@@ -1,0 +1,16 @@
+[Unit]
+Description=Remote Development Environment (web terminal)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=INSTALL_DIR
+ExecStart=node server.js --data-dir DATA_DIR --all
+Restart=on-failure
+RestartSec=5
+# Optional: set PORT to listen on a different port (default 3847)
+# Environment=PORT=3847
+
+[Install]
+WantedBy=default.target
