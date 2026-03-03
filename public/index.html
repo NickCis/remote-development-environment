@@ -6,6 +6,9 @@
   <meta name="google" content="notranslate" />
   <title>Terminal</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     /* Nerd Font for Powerline/symbols in prompts (e.g. EMACS  nickcis  ~ ) so they render on Android Chrome */
     @font-face {
@@ -13,6 +16,14 @@
       src: url('https://cdn.jsdelivr.net/gh/ryanoasis/nerd-fonts@master/patched-fonts/JetBrainsMono/Ligatures/Regular/JetBrainsMonoNerdFont-Regular.ttf') format('truetype');
       font-weight: normal;
       font-style: normal;
+    }
+    /* Monaspace Neon for file viewer code blocks */
+    @font-face {
+      font-family: 'Monaspace Neon';
+      src: url('https://cdn.jsdelivr.net/gh/github/monaspace@v1.0.0/fonts/webfonts/MonaspaceNeon-Regular.woff2') format('woff2');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -22,6 +33,7 @@
       padding: 0;
       overscroll-behavior: none;
       -webkit-overflow-scrolling: auto;
+      font-family: "Noto Sans", sans-serif;
     }
     body { overflow: hidden; }
     #terminal-wrap { position: fixed; width: 100%; left: 0; top: 0; right: 0; bottom: 0; }
@@ -101,7 +113,31 @@
     #auth-screen .error { color: #f85149; margin-top: 12px; font-size: 14px; }
     #auth-screen .token-box { margin-top: 16px; padding: 12px; background: #21262d; border-radius: 8px; word-break: break-all; font-size: 12px; color: #8b949e; max-width: 100%; }
     #auth-screen .token-actions { margin-top: 8px; }
+    #file-viewer-wrap { display: none; position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 50; flex-direction: column; background: #ffffff; padding-top: 56px; }
+    #file-viewer-wrap.visible { display: flex; }
+    #file-viewer-breadcrumb { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #d0d7de; background: #f6f8fa; color: #57606a; font-size: 14px; }
+    #file-viewer-breadcrumb .file-viewer-breadcrumb-trail { flex: 1; min-width: 0; }
+    #file-viewer-breadcrumb a { color: #0969da; text-decoration: none; }
+    #file-viewer-breadcrumb a:hover { text-decoration: underline; color: #0550ae; }
+    .file-viewer-copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; color: #57606a; cursor: pointer; flex-shrink: 0; }
+    .file-viewer-copy-btn:hover { background: #f6f8fa; color: #0969da; border-color: #0969da; }
+    .file-viewer-copy-btn svg { width: 16px; height: 16px; }
+    #file-viewer-content { flex: 1; overflow: auto; padding: 16px; background: #ffffff; min-width: 0; }
+    #file-viewer-list .file-viewer-row { display: flex; align-items: center; padding: 6px 0; color: #24292f; font-size: 14px; border-bottom: 1px solid #d0d7de; }
+    #file-viewer-list .file-viewer-row a { color: #0969da; text-decoration: none; }
+    #file-viewer-list .file-viewer-row a:hover { text-decoration: underline; color: #0550ae; }
+    #file-viewer-list .file-viewer-row .size { color: #57606a; margin-left: 12px; font-size: 12px; }
+    .file-viewer-blob { margin: 0; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; display: inline-block; min-width: 100%; }
+    .file-viewer-blob pre { margin: 0; padding: 16px; overflow: auto; font-family: "Monaspace Neon", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.5; color: #24292f; }
+    .file-viewer-blob .line-numbers { float: left; text-align: right; padding-right: 16px; margin-right: 16px; border-right: 1px solid #d0d7de; color: #57606a; user-select: none; }
+    .file-viewer-blob .line-content { overflow: visible; }
+    .file-viewer-blob .line-table { border-collapse: collapse; width: max-content; min-width: 100%; }
+    .file-viewer-blob .line-table .line-num { text-align: right; padding-right: 16px; color: #57606a; user-select: none; width: 1%; white-space: nowrap; background: #f6f8fa; }
+    .file-viewer-blob .line-table .line-content { padding-left: 8px; white-space: pre; overflow: visible; font-family: "Monaspace Neon", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.5; color: #24292f; background: #ffffff; }
+    .file-viewer-truncated { padding: 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 12px; color: #57606a; font-size: 14px; }
+    .file-viewer-truncated a { color: #0969da; }
   </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css">
 </head>
 <body>
   <div id="auth-screen">
@@ -118,11 +154,25 @@
     <div id="terminal-container"></div>
   </div>
 
+  <div id="file-viewer-wrap">
+    <div id="file-viewer-breadcrumb"></div>
+    <div id="file-viewer-content"></div>
+  </div>
+
   <div id="special-keyboard"></div>
 
   <script src="https://unpkg.com/@simplewebauthn/browser@13/dist/bundle/index.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-json.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-bash.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-css.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-markdown.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-yaml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-html.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>

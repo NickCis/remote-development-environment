@@ -410,14 +410,159 @@ app.get('/api/sessions', requireAuth, (_req, res) => {
   res.json(list);
 });
 
+// --- File system API (rooted at CWD) ---
+const MAX_FILE_SIZE = 512 * 1024;
+const MAX_FILE_LINES = 20000;
+
+function resolveSafePath(relativePath) {
+  if (relativePath == null) relativePath = '';
+  if (typeof relativePath !== 'string' || relativePath.includes('\0')) return null;
+  try {
+    relativePath = decodeURIComponent(relativePath);
+  } catch (_) {}
+  relativePath = relativePath.replace(/^\/+/, '').trim();
+  const normalized = path.normalize(relativePath.replace(/\/+/g, path.sep)).replace(/^\.\.(\/|$)/, '');
+  const resolved = path.resolve(CWD, normalized);
+  const cwdReal = path.resolve(CWD);
+  if (resolved !== cwdReal && !resolved.startsWith(cwdReal + path.sep)) return null;
+  return resolved;
+}
+
+app.get('/api/fs/list', requireAuth, (req, res) => {
+  const raw = req.query.path || '';
+  const resolved = resolveSafePath(raw);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
+    const names = fs.readdirSync(resolved);
+    const entries = [];
+    for (const name of names) {
+      const full = path.join(resolved, name);
+      try {
+        const s = fs.statSync(full);
+        entries.push({
+          name,
+          type: s.isDirectory() ? 'dir' : 'file',
+          size: s.isFile() ? s.size : undefined,
+        });
+      } catch (_) {}
+    }
+    entries.sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+    res.json({ entries });
+  } catch (e) {
+    res.status(e.code === 'ENOENT' ? 404 : 500).json({ error: e.message || 'Failed to list' });
+  }
+});
+
+app.get('/api/fs/content', requireAuth, (req, res) => {
+  const raw = req.query.path;
+  if (raw == null || raw === '') return res.status(400).json({ error: 'Path required' });
+  const resolved = resolveSafePath(raw);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  try {
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'Is a directory' });
+    if (stat.size > MAX_FILE_SIZE) {
+      return res.json({
+        binary: false,
+        content: '',
+        truncated: true,
+        message: `File too large (max ${MAX_FILE_SIZE} bytes)`,
+      });
+    }
+    const buf = fs.readFileSync(resolved);
+    const isBinary = buf.length > 0 && buf.includes(0);
+    if (isBinary) {
+      return res.json({ binary: true });
+    }
+    const str = buf.toString('utf8');
+    const lines = str.split(/\r?\n/);
+    if (lines.length > MAX_FILE_LINES) {
+      const truncated = lines.slice(0, MAX_FILE_LINES).join('\n');
+      return res.json({
+        binary: false,
+        content: truncated,
+        truncated: true,
+        totalLines: lines.length,
+      });
+    }
+    res.json({ binary: false, content: str });
+  } catch (e) {
+    res.status(e.code === 'ENOENT' ? 404 : 500).json({ error: e.message || 'Failed to read' });
+  }
+});
+
+app.get('/api/fs/download', requireAuth, (req, res) => {
+  const raw = req.query.path;
+  if (raw == null || raw === '') return res.status(400).json({ error: 'Path required' });
+  const resolved = resolveSafePath(raw);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  try {
+    const stat = fs.statSync(resolved);
+    if (stat.isDirectory()) return res.status(400).json({ error: 'Is a directory' });
+    const name = path.basename(resolved);
+    res.setHeader('Content-Disposition', 'attachment; filename="' + name.replace(/"/g, '\\"') + '"');
+    res.sendFile(resolved);
+  } catch (e) {
+    res.status(e.code === 'ENOENT' ? 404 : 500).json({ error: e.message || 'Failed to read' });
+  }
+});
+
+function findNearestGitRoot(startDir) {
+  let dir = path.resolve(startDir);
+  const cwdReal = path.resolve(CWD);
+  for (;;) {
+    if (dir !== cwdReal && !dir.startsWith(cwdReal + path.sep)) return null;
+    try {
+      const p = path.join(dir, '.git');
+      const st = fs.statSync(p);
+      if (st.isDirectory()) return dir;
+    } catch (_) {}
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+app.get('/api/fs/copy-path', requireAuth, (req, res) => {
+  const raw = req.query.path;
+  if (raw == null) return res.status(400).json({ error: 'Path required' });
+  const resolved = resolveSafePath(raw === '' ? '' : raw);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  try {
+    const stat = fs.statSync(resolved);
+    const dirToSearch = stat.isDirectory() ? resolved : path.dirname(resolved);
+    const gitRoot = findNearestGitRoot(dirToSearch);
+    let copyText;
+    if (gitRoot != null) {
+      const rel = path.relative(gitRoot, resolved).split(path.sep).join('/');
+      copyText = rel === '' ? '.' : rel;
+    } else {
+      copyText = resolved;
+    }
+    res.json({ copyText });
+  } catch (e) {
+    res.status(e.code === 'ENOENT' ? 404 : 500).json({ error: e.message || 'Failed' });
+  }
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('*', (req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 const server = app.listen(PORT, HOST, () => {
   const network = HOST === '0.0.0.0' ? 'all interfaces (0.0.0.0)' : HOST;
   console.log(`Listening on port ${PORT} (${network})`);
   console.log(`Auth required: ${AUTH_DISABLED ? 'no' : 'yes'}`);
   console.log(`CWD: ${CWD}`);
-  console.log(`Auth file: ${AUTH_FILE}`);
+  if (!AUTH_DISABLED) console.log(`Auth file: ${AUTH_FILE}`);
 });
 
 const wss = new WebSocketServer({ noServer: true });

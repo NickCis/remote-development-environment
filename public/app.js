@@ -1,6 +1,24 @@
+const LAST_SESSION_KEY = 'terminalLastSession';
+let currentSessionId = null;
+
 function getSessionParam() {
-  const params = new URLSearchParams(location.search);
-  return params.get('session') || '';
+  const p = location.pathname;
+  const match = p.match(/^\/session\/([^/]+)/);
+  return match ? match[1] : '';
+}
+
+function parseRoute() {
+  const p = location.pathname;
+  if (p === '/' || p === '') return { view: 'default' };
+  if (p === '/files' || p === '/files/') return { view: 'files', path: '', mode: 'tree' };
+  if (p.startsWith('/files/tree/')) return { view: 'files', path: decodeURIComponent(p.slice(12).replace(/\/$/, '')), mode: 'tree' };
+  if (p.startsWith('/files/blob/')) return { view: 'files', path: decodeURIComponent(p.slice(11)), mode: 'blob' };
+  const sessionMatch = p.match(/^\/session\/([^/]+)(?:\/(.*))?$/);
+  if (!sessionMatch) return { view: 'default' };
+  const sessionId = sessionMatch[1];
+  const rest = sessionMatch[2] || '';
+  if (rest === '' || rest === '/') return { view: 'terminal', sessionId };
+  return { view: 'terminal', sessionId };
 }
 
 function showAuthScreen(title, bodyHtml, primaryLabel, onPrimary) {
@@ -80,6 +98,53 @@ function showLoginScreen() {
   );
 }
 
+async function refreshSessionsMenu() {
+  const sm = document.getElementById('sessions-menu');
+  if (!sm) return;
+  const list = await fetch('/api/sessions').then((r) => r.json()).catch(() => []);
+  const current = getSessionParam();
+  const route = parseRoute();
+  sm.innerHTML = '';
+  const add = (label, sessionValue, isCurrent) => {
+    const b = document.createElement('button');
+    b.className = 'menu-item' + (isCurrent ? ' current' : '');
+    b.textContent = label;
+    if (sessionValue && sessionValue !== label) b.appendChild(document.createElement('small')).textContent = sessionValue;
+    b.type = 'button';
+    b.onclick = () => {
+      location.assign(sessionValue ? '/session/' + encodeURIComponent(sessionValue) : '/');
+    };
+    sm.appendChild(b);
+  };
+  add('New session', 'new', false);
+  const fileViewBtn = document.createElement('button');
+  fileViewBtn.className = 'menu-item';
+  fileViewBtn.textContent = 'File view';
+  fileViewBtn.type = 'button';
+  fileViewBtn.onclick = () => location.assign('/files');
+  sm.appendChild(fileViewBtn);
+  sm.appendChild(document.createElement('hr')).className = 'menu-hr';
+  if (list.length) {
+    list.forEach((s) => {
+      const id = s.id || s;
+      const label = (s.name && typeof s.name === 'string' ? s.name.trim() : null) || id;
+      add(label, id, id === current || (!current && id === currentSessionId));
+    });
+  }
+}
+
+function initSessionMenu() {
+  const sb = document.getElementById('sessions-btn');
+  const sm = document.getElementById('sessions-menu');
+  if (!sb || !sm) return;
+  sb.onclick = (e) => {
+    e.stopPropagation();
+    const open = sm.classList.toggle('open');
+    if (open) refreshSessionsMenu();
+  };
+  document.addEventListener('click', () => sm.classList.remove('open'));
+}
+
 async function initApp() {
   let authState = {};
   try {
@@ -93,10 +158,162 @@ async function initApp() {
     showLoginScreen();
     return;
   }
+  const route = parseRoute();
+  if (route.view === 'default') {
+    const last = localStorage.getItem(LAST_SESSION_KEY);
+    location.replace(last ? '/session/' + encodeURIComponent(last) : '/session/new');
+    return;
+  }
+  initSessionMenu();
+  if (route.view === 'files') {
+    initFileViewer(route.path, route.mode);
+    return;
+  }
   initTerminal();
 }
 
+function extensionToPrismLang(ext) {
+  const map = { js: 'javascript', mjs: 'javascript', cjs: 'javascript', ts: 'javascript', jsx: 'javascript', tsx: 'javascript', json: 'json', py: 'python', sh: 'bash', bash: 'bash', css: 'css', md: 'markdown', yml: 'yaml', yaml: 'yaml', html: 'html' };
+  return map[ext.toLowerCase()] || 'plaintext';
+}
+
+function initFileViewer(path, mode) {
+  const termWrap = document.getElementById('terminal-wrap');
+  const fileWrap = document.getElementById('file-viewer-wrap');
+  if (termWrap) termWrap.style.display = 'none';
+  if (fileWrap) {
+    fileWrap.classList.add('visible');
+    fileWrap.style.display = 'flex';
+  }
+
+  const basePath = '/files';
+  const breadcrumbEl = document.getElementById('file-viewer-breadcrumb');
+  const contentEl = document.getElementById('file-viewer-content');
+  const terminalHref = (function () {
+    try {
+      const last = localStorage.getItem(LAST_SESSION_KEY);
+      return last ? '/session/' + encodeURIComponent(last) : '/';
+    } catch (_) { return '/'; }
+  })();
+
+  const copyPathSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11H8.75a1.75 1.75 0 0 1-1.75-1.75V1.75Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>';
+
+  function renderBreadcrumb() {
+    const parts = [{ label: 'Terminal', href: terminalHref }, { label: 'files', href: basePath }];
+    if (path) {
+      const segs = path.split('/').filter(Boolean);
+      let acc = '';
+      segs.forEach((s, i) => {
+        acc += (acc ? '/' : '') + s;
+        const isLast = i === segs.length - 1;
+        parts.push({ label: s, href: mode === 'blob' && isLast ? null : basePath + '/tree/' + encodeURIComponent(acc).replace(/%2F/g, '/') });
+      });
+    }
+    const trailHtml = parts.map((p) => p.href ? '<a href="' + p.href + '">' + escapeHtml(p.label) + '</a>' : '<span>' + escapeHtml(p.label) + '</span>').join(' / ');
+    breadcrumbEl.innerHTML = '<span class="file-viewer-breadcrumb-trail">' + trailHtml + '</span><button type="button" class="file-viewer-copy-btn" title="Copy path" aria-label="Copy path">' + copyPathSvg + '</button>';
+    const copyBtn = breadcrumbEl.querySelector('.file-viewer-copy-btn');
+    if (copyBtn) {
+      copyBtn.onclick = function () {
+        function toast(m) {
+          var el = document.getElementById('toast');
+          if (el) { el.textContent = m; el.classList.add('show'); setTimeout(function () { el.classList.remove('show'); }, 3000); }
+        }
+        fetch('/api/fs/copy-path?path=' + encodeURIComponent(path)).then(function (r) {
+          if (!r.ok) return r.json().then(function (e) { toast(e.error || 'Failed to copy'); });
+          return r.json();
+        }).then(function (data) {
+          if (data && data.copyText != null) {
+            navigator.clipboard.writeText(data.copyText).then(function () { toast('Path copied to clipboard'); }, function () { toast('Failed to copy'); });
+          }
+        }).catch(function () { toast('Failed to copy'); });
+      };
+    }
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function renderTree() {
+    renderBreadcrumb();
+    contentEl.innerHTML = '<div id="file-viewer-list">Loading…</div>';
+    const listEl = document.getElementById('file-viewer-list');
+    fetch('/api/fs/list?path=' + encodeURIComponent(path)).then((r) => {
+      if (!r.ok) return r.json().then((e) => { listEl.innerHTML = '<div class="file-viewer-truncated">' + escapeHtml(e.error || 'Failed') + '</div>'; });
+      return r.json();
+    }).then((data) => {
+      if (!data || !data.entries) return;
+      let html = '';
+      if (path) {
+        const parentPath = path.split('/').slice(0, -1).join('/');
+        html += '<div class="file-viewer-row">📁 <a href="' + basePath + '/tree/' + encodeURIComponent(parentPath).replace(/%2F/g, '/') + '">..</a></div>';
+      }
+      (data.entries || []).forEach((e) => {
+        const name = escapeHtml(e.name);
+        const fullPath = path ? path + '/' + e.name : e.name;
+        if (e.type === 'dir') {
+          html += '<div class="file-viewer-row">📁 <a href="' + basePath + '/tree/' + encodeURIComponent(fullPath).replace(/%2F/g, '/') + '">' + name + '</a></div>';
+        } else {
+          const size = e.size != null ? (e.size < 1024 ? e.size + ' B' : (e.size < 1024 * 1024 ? (e.size / 1024).toFixed(1) + ' KB' : (e.size / (1024 * 1024)).toFixed(1) + ' MB') ) : '';
+          html += '<div class="file-viewer-row">📄 <a href="' + basePath + '/blob/' + encodeURIComponent(fullPath).replace(/%2F/g, '/') + '">' + name + '</a><span class="size">' + size + '</span></div>';
+        }
+      });
+      listEl.innerHTML = html || '<div class="file-viewer-row">(empty)</div>';
+    }).catch(() => { listEl.innerHTML = '<div class="file-viewer-truncated">Failed to load directory.</div>'; });
+  }
+
+  function renderBlob() {
+    renderBreadcrumb();
+    contentEl.innerHTML = '<div class="file-viewer-blob">Loading…</div>';
+    fetch('/api/fs/content?path=' + encodeURIComponent(path)).then((r) => {
+      if (!r.ok) return r.json().then((e) => { contentEl.innerHTML = '<div class="file-viewer-truncated">' + escapeHtml(e.error || 'Failed') + '</div>'; });
+      return r.json();
+    }).then((data) => {
+      if (!data) return;
+      if (data.binary) {
+        contentEl.innerHTML = '<div class="file-viewer-truncated">Binary file. <a href="/api/fs/download?path=' + encodeURIComponent(path) + '" download>Download</a></div>';
+        return;
+      }
+      let notice = '';
+      if (data.truncated) {
+        notice = '<div class="file-viewer-truncated">' + escapeHtml(data.message || 'File truncated.') + ' <a href="/api/fs/download?path=' + encodeURIComponent(path) + '">Download</a></div>';
+      }
+      const ext = path.split('/').pop().split('.').pop() || '';
+      const lang = extensionToPrismLang(ext);
+      const rawLines = (data.content || '').split(/\r?\n/);
+      const codeByLine = rawLines.map((line) => {
+        if (typeof Prism !== 'undefined' && Prism.languages[lang]) {
+          try {
+            return Prism.highlight(line, Prism.languages[lang], lang);
+          } catch (_) {}
+        }
+        return escapeHtml(line);
+      });
+      const tableRows = codeByLine.map((line, i) => '<tr><td class="line-num">' + (i + 1) + '</td><td class="line-content">' + line + '</td></tr>').join('');
+      contentEl.innerHTML = notice + '<div class="file-viewer-blob"><table class="line-table"><tbody>' + tableRows + '</tbody></table></div>';
+    }).catch(() => { contentEl.innerHTML = '<div class="file-viewer-truncated">Failed to load file.</div>'; });
+  }
+
+  if (mode === 'blob') renderBlob();
+  else renderTree();
+
+  window._fileViewerOnPopState = function () {
+    const r = parseRoute();
+    if (r.view === 'files') initFileViewer(r.path, r.mode);
+  };
+  window.addEventListener('popstate', window._fileViewerOnPopState);
+}
+
 async function initTerminal() {
+  document.getElementById('file-viewer-wrap').classList.remove('visible');
+  document.getElementById('file-viewer-wrap').style.display = 'none';
+  document.getElementById('terminal-wrap').style.display = '';
+  if (window._fileViewerOnPopState) {
+    window.removeEventListener('popstate', window._fileViewerOnPopState);
+    window._fileViewerOnPopState = null;
+  }
   const authState = await fetch('/api/auth-state').then((r) => r.json()).catch(() => ({}));
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let sessionParam = getSessionParam();
@@ -121,7 +338,7 @@ term.open(document.getElementById('terminal-container'));
 fitAddon.fit();
 
 let ws = new WebSocket(wsUrl);
-let currentSessionId = null;
+currentSessionId = null;
 let closingForReplace = false;
 let reconnectTimeout = null;
 
@@ -318,9 +535,9 @@ function connect() {
         if (msg.type === 'session' && msg.id) {
           currentSessionId = msg.id;
           term.reset();
-          const url = new URL(location.href);
-          url.searchParams.set('session', msg.id);
-          history.replaceState(null, '', url.pathname + url.search);
+          const path = '/session/' + encodeURIComponent(msg.id);
+          history.replaceState(null, '', path);
+          try { localStorage.setItem(LAST_SESSION_KEY, msg.id); } catch (_) {}
           return;
         }
         if (msg.type === 'replay' && msg.data) {
@@ -346,9 +563,7 @@ function connect() {
     if (ev.code === 4001 || ev.reason === 'session closed') {
       showToast('Session closed.', 8000);
       currentSessionId = null;
-      const url = new URL(location.href);
-      url.searchParams.delete('session');
-      history.replaceState(null, '', url.pathname + url.search);
+      history.replaceState(null, '', '/');
       return;
     }
     if (currentSessionId || getSessionParam()) {
@@ -397,44 +612,6 @@ term.onResize(({ cols, rows }) => {
 // --- Session menu ---
 const sessionsBtn = document.getElementById('sessions-btn');
 const sessionsMenu = document.getElementById('sessions-menu');
-
-async function refreshSessionsMenu() {
-  const list = await fetch('/api/sessions').then((r) => r.json()).catch(() => []);
-  const current = getSessionParam();
-  sessionsMenu.innerHTML = '';
-  const add = (label, sessionValue, isCurrent) => {
-    const b = document.createElement('button');
-    b.className = 'menu-item' + (isCurrent ? ' current' : '');
-    b.textContent = label;
-    if (sessionValue && sessionValue !== label) b.appendChild(document.createElement('small')).textContent = sessionValue;
-    b.type = 'button';
-    b.onclick = () => {
-      const url = new URL(location.href);
-      if (sessionValue === 'new') url.searchParams.set('session', 'new');
-      else if (sessionValue) url.searchParams.set('session', sessionValue);
-      else url.searchParams.delete('session');
-      location.assign(url.pathname + url.search);
-    };
-    sessionsMenu.appendChild(b);
-  };
-  add('New session', 'new', false);
-  if (list.length) {
-    sessionsMenu.appendChild(document.createElement('hr')).className = 'menu-hr';
-    list.forEach((s) => {
-      const id = s.id || s;
-      const label = (s.name && typeof s.name === 'string' ? s.name.trim() : null) || id;
-      add(label, id, id === current || (!current && id === currentSessionId));
-    });
-  }
-}
-
-sessionsBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const open = sessionsMenu.classList.toggle('open');
-  if (open) refreshSessionsMenu();
-});
-
-document.addEventListener('click', () => sessionsMenu.classList.remove('open'));
 
 // --- Toolbox ---
 const toolboxBtn = document.getElementById('toolbox-btn');
