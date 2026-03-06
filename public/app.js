@@ -1,4 +1,6 @@
 const LAST_SESSION_KEY = 'terminalLastSession';
+const LAST_FILE_VIEW_URL_KEY = 'fileViewLastUrl';
+const LAST_DIFF_VIEW_URL_KEY = 'diffViewLastUrl';
 let currentSessionId = null;
 
 function getSessionParam() {
@@ -13,6 +15,8 @@ function parseRoute() {
   if (p === '/files' || p === '/files/') return { view: 'files', path: '', mode: 'tree' };
   if (p.startsWith('/files/tree/')) return { view: 'files', path: decodeURIComponent(p.slice(12).replace(/\/$/, '')), mode: 'tree' };
   if (p.startsWith('/files/blob/')) return { view: 'files', path: decodeURIComponent(p.slice(11)), mode: 'blob' };
+  if (p === '/diff' || p === '/diff/') return { view: 'diff', path: '' };
+  if (p.startsWith('/diff/')) return { view: 'diff', path: decodeURIComponent(p.slice(6).replace(/\/$/, '')) };
   const sessionMatch = p.match(/^\/session\/([^/]+)(?:\/(.*))?$/);
   if (!sessionMatch) return { view: 'default' };
   const sessionId = sessionMatch[1];
@@ -121,8 +125,22 @@ async function refreshSessionsMenu() {
   fileViewBtn.className = 'menu-item';
   fileViewBtn.textContent = 'File view';
   fileViewBtn.type = 'button';
-  fileViewBtn.onclick = () => location.assign('/files');
+  try {
+    fileViewBtn.onclick = () => location.assign(sessionStorage.getItem(LAST_FILE_VIEW_URL_KEY) || '/files');
+  } catch (_) {
+    fileViewBtn.onclick = () => location.assign('/files');
+  }
   sm.appendChild(fileViewBtn);
+  const diffViewBtn = document.createElement('button');
+  diffViewBtn.className = 'menu-item';
+  diffViewBtn.textContent = 'Diff view';
+  diffViewBtn.type = 'button';
+  try {
+    diffViewBtn.onclick = () => location.assign(sessionStorage.getItem(LAST_DIFF_VIEW_URL_KEY) || '/diff');
+  } catch (_) {
+    diffViewBtn.onclick = () => location.assign('/diff');
+  }
+  sm.appendChild(diffViewBtn);
   sm.appendChild(document.createElement('hr')).className = 'menu-hr';
   if (list.length) {
     list.forEach((s) => {
@@ -166,7 +184,14 @@ async function initApp() {
   }
   initSessionMenu();
   if (route.view === 'files') {
+    try { sessionStorage.setItem(LAST_FILE_VIEW_URL_KEY, location.pathname + location.search); } catch (_) {}
     initFileViewer(route.path, route.mode);
+    return;
+  }
+  if (route.view === 'diff') {
+    try { sessionStorage.setItem(LAST_DIFF_VIEW_URL_KEY, location.pathname + location.search); } catch (_) {}
+    const diffPath = new URLSearchParams(location.search).get('path') || route.path;
+    initDiffViewer(diffPath);
     return;
   }
   initTerminal();
@@ -197,6 +222,11 @@ function initFileViewer(path, mode) {
   })();
 
   const copyPathSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"/><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11H8.75a1.75 1.75 0 0 1-1.75-1.75V1.75Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"/></svg>';
+  const dotsSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16"><path fill="currentColor" d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>';
+
+  function getCurrentDirPath() {
+    return mode === 'blob' ? path.split('/').slice(0, -1).join('/') : path;
+  }
 
   function renderBreadcrumb() {
     const parts = [{ label: 'Terminal', href: terminalHref }, { label: 'files', href: basePath }];
@@ -210,7 +240,58 @@ function initFileViewer(path, mode) {
       });
     }
     const trailHtml = parts.map((p) => p.href ? '<a href="' + p.href + '">' + escapeHtml(p.label) + '</a>' : '<span>' + escapeHtml(p.label) + '</span>').join(' / ');
-    breadcrumbEl.innerHTML = '<span class="file-viewer-breadcrumb-trail">' + trailHtml + '</span><button type="button" class="file-viewer-copy-btn" title="Copy path" aria-label="Copy path">' + copyPathSvg + '</button>';
+    breadcrumbEl.innerHTML = '<span class="file-viewer-breadcrumb-trail">' + trailHtml + '</span><div class="file-viewer-breadcrumb-actions"><button type="button" class="file-viewer-copy-btn" title="Copy path" aria-label="Copy path">' + copyPathSvg + '</button><button type="button" class="file-viewer-dots-btn" title="More actions" aria-label="More actions" aria-haspopup="true">' + dotsSvg + '</button></div>';
+    const dotsBtn = breadcrumbEl.querySelector('.file-viewer-dots-btn');
+    const dotsMenuId = 'file-viewer-dots-menu';
+    let dotsMenu = document.getElementById(dotsMenuId);
+    if (!dotsMenu) {
+      dotsMenu = document.createElement('div');
+      dotsMenu.id = dotsMenuId;
+      dotsMenu.className = 'file-viewer-dots-menu';
+      dotsMenu.setAttribute('role', 'menu');
+      document.body.appendChild(dotsMenu);
+    }
+    dotsMenu.innerHTML = '';
+    const addItem = (label, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'menu-item';
+      b.textContent = label;
+      b.setAttribute('role', 'menuitem');
+      b.onclick = () => { dotsMenu.classList.remove('open'); onClick(); };
+      dotsMenu.appendChild(b);
+    };
+    addItem('Open terminal', () => {
+      const dir = getCurrentDirPath();
+      const cwd = dir ? '?cwd=' + encodeURIComponent(dir) : '';
+      location.assign('/session/new' + cwd);
+    });
+    addItem('Diff view', () => {
+      const dir = getCurrentDirPath();
+      location.assign(dir ? '/diff?path=' + encodeURIComponent(dir) : '/diff');
+    });
+    if (dotsBtn) {
+      dotsBtn.onclick = (e) => {
+        e.stopPropagation();
+        const open = dotsMenu.classList.toggle('open');
+        if (open) {
+          const rect = dotsBtn.getBoundingClientRect();
+          const gap = 4;
+          dotsMenu.style.left = rect.left + 'px';
+          dotsMenu.style.top = (rect.bottom + gap) + 'px';
+          dotsMenu.style.right = 'auto';
+          dotsMenu.style.bottom = 'auto';
+          var menuRect = dotsMenu.getBoundingClientRect();
+          var vw = window.innerWidth;
+          var vh = window.innerHeight;
+          if (menuRect.right > vw) dotsMenu.style.left = (vw - menuRect.width - gap) + 'px';
+          if (menuRect.bottom > vh) dotsMenu.style.top = (rect.top - menuRect.height - gap) + 'px';
+        }
+      };
+    }
+    document.addEventListener('click', function closeDots() {
+      dotsMenu.classList.remove('open');
+    }, { once: true });
     const copyBtn = breadcrumbEl.querySelector('.file-viewer-copy-btn');
     if (copyBtn) {
       copyBtn.onclick = function () {
@@ -306,18 +387,356 @@ function initFileViewer(path, mode) {
   window.addEventListener('popstate', window._fileViewerOnPopState);
 }
 
+function initDiffViewer(pathFromRoute) {
+  const termWrap = document.getElementById('terminal-wrap');
+  const fileWrap = document.getElementById('file-viewer-wrap');
+  const diffWrap = document.getElementById('diff-viewer-wrap');
+  if (termWrap) termWrap.style.display = 'none';
+  if (fileWrap) { fileWrap.classList.remove('visible'); fileWrap.style.display = 'none'; }
+  if (diffWrap) {
+    diffWrap.classList.add('visible');
+    diffWrap.style.display = 'flex';
+  }
+  const params = new URLSearchParams(location.search);
+  const pathParam = params.get('path');
+  const path = (pathParam != null && pathParam !== '') ? pathParam : pathFromRoute;
+  const breadcrumbEl = document.getElementById('diff-viewer-breadcrumb');
+  const contentEl = document.getElementById('diff-viewer-content');
+  const terminalHref = (function () {
+    try {
+      const last = localStorage.getItem(LAST_SESSION_KEY);
+      return last ? '/session/' + encodeURIComponent(last) : '/';
+    } catch (_) { return '/'; }
+  })();
+  var diffData = { files: [] };
+  var comments = {};
+  var viewedFiles = new Set();
+  var ignoredFiles = new Set();
+  var expandedBefore = {};
+  var expandedAfter = {};
+  var commentingOn = null;
+  var editingComment = null;
+
+  function escapeHtml(s) {
+    var div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  function getCommentsForReview() {
+    var out = [];
+    Object.keys(comments).forEach(function (filepath) {
+      if (ignoredFiles.has(filepath)) return;
+      (comments[filepath] || []).forEach(function (c) {
+        var linePart = c.lineStart != null ? (c.lineEnd != null && c.lineEnd !== c.lineStart ? c.lineStart + '-' + c.lineEnd : '' + c.lineStart) : '';
+        out.push('In @' + filepath + (linePart ? ':' + linePart : '') + ': ' + (c.text || '').trim());
+      });
+    });
+    return out.join('\n');
+  }
+
+  function highlightLine(content, type, lang) {
+    if (typeof Prism === 'undefined' || !content) return escapeHtml(content);
+    try {
+      if (Prism.languages[lang]) return Prism.highlight(content, Prism.languages[lang], lang);
+    } catch (_) {}
+    return escapeHtml(content);
+  }
+
+  function renderBreadcrumb() {
+    var basePath = '/diff';
+    var parts = [{ label: 'Terminal', href: terminalHref }, { label: 'Diff view', href: basePath }];
+    if (path) parts.push({ label: path || '(root)', href: null });
+    breadcrumbEl.innerHTML = parts.map(function (p) {
+      return p.href ? '<a href="' + p.href + '">' + escapeHtml(p.label || '') + '</a>' : '<span>' + escapeHtml(p.label || '') + '</span>';
+    }).join(' / ');
+  }
+
+  function renderDiff() {
+    renderBreadcrumb();
+    contentEl.innerHTML = '<div class="file-viewer-truncated">Loading diff…</div>';
+    var q = path ? '?path=' + encodeURIComponent(path) : '';
+    fetch('/api/diff' + q).then(function (r) {
+      if (!r.ok) return r.json().then(function (e) {
+        contentEl.innerHTML = '<div class="file-viewer-truncated">' + escapeHtml(e.error || 'Failed to load diff') + '</div>';
+      });
+      return r.json();
+    }).then(function (data) {
+      if (!data || !data.files || data.files.length === 0) {
+        contentEl.innerHTML = '<div class="file-viewer-truncated">No changes.</div>';
+        return;
+      }
+      diffData = data;
+      var toolbar = '<div class="diff-toolbar"><button type="button" class="diff-review-btn">Review</button></div>';
+      data.files.forEach(function (f, fileIndex) {
+        var filepath = f.path || f.file || '';
+        var ext = (filepath.split('/').pop() || '').split('.').pop() || '';
+        var lang = extensionToPrismLang(ext);
+        var fileComments = comments[filepath] || [];
+        var viewed = viewedFiles.has(filepath);
+        var ignored = ignoredFiles.has(filepath);
+        toolbar += '<div class="diff-file" data-file="' + escapeHtml(filepath) + '">';
+        toolbar += '<div class="diff-file-header">' + escapeHtml(filepath || '(unknown)');
+        if (fileComments.length) toolbar += ' <span class="diff-comment-count">(' + fileComments.length + ' comment' + (fileComments.length !== 1 ? 's' : '') + ')</span>';
+        toolbar += ' <label class="diff-checkbox-label"><input type="checkbox" class="diff-viewed-cb" ' + (viewed ? 'checked' : '') + '><span>Viewed</span></label>';
+        toolbar += ' <label class="diff-checkbox-label"><input type="checkbox" class="diff-ignore-cb" ' + (ignored ? 'checked' : '') + '><span>Ignore</span></label>';
+        toolbar += ' <button type="button" class="diff-file-comment-btn">Add file comment</button></div>';
+        if (!viewed) {
+          (comments[filepath] || []).forEach(function (c, cIndex) {
+            if (c.lineStart != null) return;
+            var isEditing = editingComment && editingComment.filepath === filepath && editingComment.index === cIndex;
+            if (isEditing) {
+              toolbar += '<div class="diff-comment-form diff-comment-form-edit" data-file="' + escapeHtml(filepath) + '" data-comment-index="' + cIndex + '"><textarea rows="3">' + escapeHtml(c.text || '') + '</textarea><div class="diff-comment-form-actions"><button type="button" class="diff-comment-cancel-edit-btn">Cancel</button><button type="button" class="diff-comment-save-btn">Save</button></div></div>';
+            } else {
+              toolbar += '<div class="diff-comment-inline" data-file="' + escapeHtml(filepath) + '" data-comment-index="' + cIndex + '"><span class="diff-comment-range">In @' + escapeHtml(filepath) + ': </span><span class="diff-comment-text">' + escapeHtml(c.text || '') + '</span><span class="diff-comment-actions"><button type="button" class="diff-comment-edit-btn">Edit</button><button type="button" class="diff-comment-remove-btn">Remove</button></span></div>';
+            }
+          });
+        }
+        if (!viewed && f.hunks && f.hunks.length) {
+          f.hunks.forEach(function (hunk, hunkIndex) {
+            var hunkKey = filepath + ':' + hunkIndex;
+            var extraBefore = expandedBefore[hunkKey] || 0;
+            var extraAfter = expandedAfter[hunkKey] || 0;
+            var nonAddCount = (hunk.lines || []).filter(function (l) { return l.type !== 'add'; }).length;
+            var lastOld = hunk.oldStart + Math.max(0, nonAddCount - 1);
+            var canExpandAbove = hunk.oldStart > 1 && (hunk.oldStart - extraBefore) > 1;
+            var expandAboveLines = Math.min(5, hunk.oldStart - extraBefore - 1);
+
+            toolbar += '<div class="diff-hunk" data-hunk-key="' + escapeHtml(hunkKey) + '">';
+            toolbar += '<div class="diff-hunk-header">' + escapeHtml(hunk.header || '') + '</div>';
+            if (extraBefore > 0) {
+              var start = Math.max(1, hunk.oldStart - extraBefore);
+              var end = hunk.oldStart - 1;
+              toolbar += '<div class="diff-context-above" data-file="' + escapeHtml(filepath) + '" data-start="' + start + '" data-end="' + end + '">Loading…</div>';
+            }
+            if (canExpandAbove) {
+              toolbar += '<button type="button" class="diff-expand-row diff-expand-above" data-hunk-key="' + escapeHtml(hunkKey) + '" data-file="' + escapeHtml(filepath) + '" data-old-start="' + hunk.oldStart + '"><span class="diff-expand-icon">↑</span> Expand ' + expandAboveLines + ' line' + (expandAboveLines !== 1 ? 's' : '') + '</button>';
+            }
+            (hunk.lines || []).forEach(function (line) {
+              var cls = 'diff-line diff-line-' + (line.type || 'context');
+              var content = highlightLine(line.content || '', line.type, lang);
+              var prefix = line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ';
+              var oldLineStr = line.oldLine != null ? String(line.oldLine) : '';
+              var newLineStr = line.newLine != null ? String(line.newLine) : '';
+              var isCommenting = commentingOn && commentingOn.filepath === filepath && String(commentingOn.oldLine) === oldLineStr && String(commentingOn.newLine) === newLineStr;
+              toolbar += '<div class="' + cls + '" data-file="' + escapeHtml(filepath) + '" data-old-line="' + oldLineStr + '" data-new-line="' + newLineStr + '">';
+              toolbar += '<span class="diff-line-num ' + (line.oldLine == null ? 'empty' : '') + '">' + (line.oldLine != null ? line.oldLine : '') + '</span>';
+              toolbar += '<span class="diff-line-num ' + (line.newLine == null ? 'empty' : '') + '">' + (line.newLine != null ? line.newLine : '') + '</span>';
+              toolbar += '<span class="diff-line-prefix">' + prefix + '</span><span class="diff-line-content">' + content + '</span></div>';
+              if (isCommenting) {
+                toolbar += '<div class="diff-comment-form"><textarea placeholder="Add a comment..." rows="3"></textarea><div class="diff-comment-form-actions"><button type="button" class="diff-comment-cancel-btn">Cancel</button><button type="button" class="diff-comment-add-btn">Add comment</button></div></div>';
+              }
+              (comments[filepath] || []).forEach(function (c, cIndex) {
+                var applies = false;
+                if (c.lineStart == null) { applies = false; }
+                else if (line.newLine != null) {
+                  applies = line.newLine >= c.lineStart && line.newLine <= (c.lineEnd != null ? c.lineEnd : c.lineStart);
+                } else {
+                  applies = line.oldLine != null && line.oldLine === c.lineStart && (c.lineEnd == null || c.lineEnd === c.lineStart);
+                }
+                if (!applies) return;
+                var range = 'In @' + filepath + (c.lineStart != null ? ':' + c.lineStart + (c.lineEnd != null && c.lineEnd !== c.lineStart ? '-' + c.lineEnd : '') : '') + ': ';
+                var isEditing = editingComment && editingComment.filepath === filepath && editingComment.index === cIndex;
+                if (isEditing) {
+                  toolbar += '<div class="diff-comment-form diff-comment-form-edit" data-file="' + escapeHtml(filepath) + '" data-comment-index="' + cIndex + '"><textarea rows="3">' + escapeHtml(c.text || '') + '</textarea><div class="diff-comment-form-actions"><button type="button" class="diff-comment-cancel-edit-btn">Cancel</button><button type="button" class="diff-comment-save-btn">Save</button></div></div>';
+                } else {
+                  toolbar += '<div class="diff-comment-inline" data-file="' + escapeHtml(filepath) + '" data-comment-index="' + cIndex + '"><span class="diff-comment-range">' + escapeHtml(range) + '</span><span class="diff-comment-text">' + escapeHtml(c.text || '') + '</span><span class="diff-comment-actions"><button type="button" class="diff-comment-edit-btn">Edit</button><button type="button" class="diff-comment-remove-btn">Remove</button></span></div>';
+                }
+              });
+            });
+            if (extraAfter > 0) {
+              toolbar += '<div class="diff-context-below" data-file="' + escapeHtml(filepath) + '" data-start="' + (lastOld + 1) + '" data-end="' + (lastOld + extraAfter) + '">Loading…</div>';
+            }
+            toolbar += '<button type="button" class="diff-expand-row diff-expand-below" data-hunk-key="' + escapeHtml(hunkKey) + '" data-file="' + escapeHtml(filepath) + '" data-last-old="' + lastOld + '"><span class="diff-expand-icon">↓</span> Expand 5 lines</button>';
+            toolbar += '</div>';
+          });
+        }
+        toolbar += '</div>';
+      });
+      contentEl.innerHTML = toolbar;
+
+      contentEl.querySelectorAll('.diff-review-btn').forEach(function (btn) {
+        btn.onclick = function () {
+          var textarea = document.getElementById('diff-review-textarea');
+          var modal = document.getElementById('diff-review-modal');
+          if (textarea && modal) { textarea.value = getCommentsForReview(); modal.classList.add('visible'); modal.setAttribute('aria-hidden', 'false'); }
+        };
+      });
+      contentEl.querySelectorAll('.diff-viewed-cb').forEach(function (cb) {
+        var fileDiv = cb.closest('.diff-file');
+        var filepath = fileDiv && fileDiv.getAttribute('data-file');
+        if (filepath) cb.onchange = function () { if (cb.checked) viewedFiles.add(filepath); else viewedFiles.delete(filepath); renderDiff(); };
+      });
+      contentEl.querySelectorAll('.diff-ignore-cb').forEach(function (cb) {
+        var fileDiv = cb.closest('.diff-file');
+        var filepath = fileDiv && fileDiv.getAttribute('data-file');
+        if (filepath) cb.onchange = function () { if (cb.checked) ignoredFiles.add(filepath); else ignoredFiles.delete(filepath); renderDiff(); };
+      });
+      contentEl.querySelectorAll('.diff-file-comment-btn').forEach(function (btn) {
+        var fileDiv = btn.closest('.diff-file');
+        var filepath = fileDiv && fileDiv.getAttribute('data-file');
+        if (filepath) btn.onclick = function () {
+          var text = prompt('File-level comment:');
+          if (text == null || !text.trim()) return;
+          if (!comments[filepath]) comments[filepath] = [];
+          comments[filepath].push({ lineStart: null, lineEnd: null, text: text.trim() });
+          renderDiff();
+        };
+      });
+      contentEl.querySelectorAll('.diff-expand-row.diff-expand-above').forEach(function (btn) {
+        var key = btn.getAttribute('data-hunk-key');
+        if (key) btn.onclick = function () { expandedBefore[key] = (expandedBefore[key] || 0) + 5; renderDiff(); };
+      });
+      contentEl.querySelectorAll('.diff-expand-row.diff-expand-below').forEach(function (btn) {
+        var key = btn.getAttribute('data-hunk-key');
+        if (key) btn.onclick = function () { expandedAfter[key] = (expandedAfter[key] || 0) + 5; renderDiff(); };
+      });
+      contentEl.querySelectorAll('.diff-context-above, .diff-context-below').forEach(function (el) {
+        var filepath = el.getAttribute('data-file');
+        var start = parseInt(el.getAttribute('data-start'), 10);
+        var end = parseInt(el.getAttribute('data-end'), 10);
+        if (!filepath || !start || !end) return;
+        fetch('/api/diff/context?path=' + encodeURIComponent(filepath) + '&start=' + start + '&end=' + end + '&revision=HEAD').then(function (r) {
+          return r.json().then(function (d) {
+            if (!r.ok) { el.textContent = (d && d.error) ? d.error : 'No context'; return; }
+            if (d && Array.isArray(d.lines)) {
+              var lang = extensionToPrismLang((filepath.split('/').pop() || '').split('.').pop() || '');
+              el.innerHTML = d.lines.map(function (line, i) {
+                var ln = start + i;
+                return '<div class="diff-line diff-line-context" data-file="' + escapeHtml(filepath) + '" data-old-line="' + ln + '"><span class="diff-line-num">' + ln + '</span><span class="diff-line-num empty"></span><span class="diff-line-prefix"> </span><span class="diff-line-content">' + highlightLine(line, 'context', lang) + '</span></div>';
+              }).join('');
+            } else { el.textContent = 'No context'; }
+          });
+        }).catch(function () { el.textContent = 'Failed to load context'; });
+      });
+      contentEl.querySelectorAll('.diff-line[data-file]').forEach(function (lineEl) {
+        if (!lineEl.hasAttribute('data-old-line') && !lineEl.hasAttribute('data-new-line')) return;
+        lineEl.style.cursor = 'pointer';
+        lineEl.addEventListener('click', function () {
+          var filepath = lineEl.getAttribute('data-file');
+          var oldLine = lineEl.getAttribute('data-old-line');
+          var newLine = lineEl.getAttribute('data-new-line');
+          if (!filepath) return;
+          commentingOn = { filepath: filepath, oldLine: oldLine || '', newLine: newLine || '' };
+          renderDiff();
+        });
+      });
+      contentEl.querySelectorAll('.diff-comment-form:not(.diff-comment-form-edit)').forEach(function (form) {
+        var ta = form.querySelector('textarea');
+        var cancelBtn = form.querySelector('.diff-comment-cancel-btn');
+        var addBtn = form.querySelector('.diff-comment-add-btn');
+        var lineEl = form.previousElementSibling;
+        if (!lineEl || !lineEl.classList.contains('diff-line')) return;
+        var filepath = lineEl.getAttribute('data-file');
+        var oldLine = lineEl.getAttribute('data-old-line');
+        var newLine = lineEl.getAttribute('data-new-line');
+        var lineStart = (newLine ? parseInt(newLine, 10) : null) || (oldLine ? parseInt(oldLine, 10) : null);
+        if (cancelBtn) cancelBtn.onclick = function () { commentingOn = null; renderDiff(); };
+        if (addBtn) addBtn.onclick = function () {
+          var text = (ta && ta.value || '').trim();
+          if (!filepath) return;
+          if (!comments[filepath]) comments[filepath] = [];
+          comments[filepath].push({ lineStart: lineStart, lineEnd: lineStart, text: text });
+          commentingOn = null;
+          renderDiff();
+        };
+        if (ta) setTimeout(function () { ta.focus(); }, 0);
+      });
+      contentEl.querySelectorAll('.diff-comment-edit-btn').forEach(function (btn) {
+        var wrap = btn.closest('.diff-comment-inline');
+        if (!wrap) return;
+        var filepath = wrap.getAttribute('data-file');
+        var index = parseInt(wrap.getAttribute('data-comment-index'), 10);
+        if (filepath == null || isNaN(index)) return;
+        btn.onclick = function () { editingComment = { filepath: filepath, index: index }; renderDiff(); };
+      });
+      contentEl.querySelectorAll('.diff-comment-remove-btn').forEach(function (btn) {
+        var wrap = btn.closest('.diff-comment-inline');
+        if (!wrap) return;
+        var filepath = wrap.getAttribute('data-file');
+        var index = parseInt(wrap.getAttribute('data-comment-index'), 10);
+        if (filepath == null || isNaN(index)) return;
+        btn.onclick = function () {
+          if (comments[filepath]) {
+            comments[filepath].splice(index, 1);
+            if (comments[filepath].length === 0) delete comments[filepath];
+          }
+          if (editingComment && editingComment.filepath === filepath) {
+            if (editingComment.index === index) editingComment = null;
+            else if (editingComment.index > index) editingComment.index--;
+          }
+          renderDiff();
+        };
+      });
+      contentEl.querySelectorAll('.diff-comment-form-edit').forEach(function (form) {
+        var filepath = form.getAttribute('data-file');
+        var index = parseInt(form.getAttribute('data-comment-index'), 10);
+        if (filepath == null || isNaN(index) || !comments[filepath] || !comments[filepath][index]) return;
+        var ta = form.querySelector('textarea');
+        var cancelBtn = form.querySelector('.diff-comment-cancel-edit-btn');
+        var saveBtn = form.querySelector('.diff-comment-save-btn');
+        if (cancelBtn) cancelBtn.onclick = function () { editingComment = null; renderDiff(); };
+        if (saveBtn) saveBtn.onclick = function () {
+          comments[filepath][index].text = (ta && ta.value || '').trim();
+          editingComment = null;
+          renderDiff();
+        };
+        if (ta) setTimeout(function () { ta.focus(); }, 0);
+      });
+      var modal = document.getElementById('diff-review-modal');
+      if (modal) {
+        modal.querySelector('.diff-review-modal-backdrop').onclick = function () { modal.classList.remove('visible'); modal.setAttribute('aria-hidden', 'true'); };
+        var cancelBtn = modal.querySelector('.diff-review-cancel-btn');
+        if (cancelBtn) cancelBtn.onclick = function () { modal.classList.remove('visible'); modal.setAttribute('aria-hidden', 'true'); };
+        var copyBtn = modal.querySelector('.diff-review-copy-btn');
+        if (copyBtn) copyBtn.onclick = function () { var ta = document.getElementById('diff-review-textarea'); if (ta) navigator.clipboard.writeText(ta.value); };
+        var confirmBtn = modal.querySelector('.diff-review-confirm-btn');
+        if (confirmBtn) confirmBtn.onclick = function () {
+          var pathsToStage = (diffData.files || []).map(function (f) { return f.path || f.file || ''; }).filter(function (p) { return p && !ignoredFiles.has(p); });
+          if (pathsToStage.length === 0) { modal.classList.remove('visible'); modal.setAttribute('aria-hidden', 'true'); return; }
+          fetch('/api/diff/stage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths: pathsToStage }) }).then(function (r) {
+            if (!r.ok) return r.json().then(function (e) { alert(e.error || 'Failed to stage'); });
+            modal.classList.remove('visible'); modal.setAttribute('aria-hidden', 'true');
+            renderDiff();
+          }).catch(function () { alert('Failed to stage'); });
+        };
+      }
+    }).catch(function () {
+      contentEl.innerHTML = '<div class="file-viewer-truncated">Failed to load diff.</div>';
+    });
+  }
+
+  window._diffViewerOnPopState = function () {
+    var r = parseRoute();
+    if (r.view === 'diff') initDiffViewer(new URLSearchParams(location.search).get('path') || r.path);
+  };
+  window.addEventListener('popstate', window._diffViewerOnPopState);
+  renderDiff();
+}
+
 async function initTerminal() {
   document.getElementById('file-viewer-wrap').classList.remove('visible');
   document.getElementById('file-viewer-wrap').style.display = 'none';
+  var diffWrap = document.getElementById('diff-viewer-wrap');
+  if (diffWrap) { diffWrap.classList.remove('visible'); diffWrap.style.display = 'none'; }
   document.getElementById('terminal-wrap').style.display = '';
   if (window._fileViewerOnPopState) {
     window.removeEventListener('popstate', window._fileViewerOnPopState);
     window._fileViewerOnPopState = null;
   }
+  if (window._diffViewerOnPopState) {
+    window.removeEventListener('popstate', window._diffViewerOnPopState);
+    window._diffViewerOnPopState = null;
+  }
   const authState = await fetch('/api/auth-state').then((r) => r.json()).catch(() => ({}));
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let sessionParam = getSessionParam();
   let wsUrl = `${protocol}//${location.host}?session=${encodeURIComponent(sessionParam)}`;
+  try {
+    const urlParams = new URLSearchParams(location.search);
+    const cwdParam = urlParams.get('cwd');
+    if (sessionParam === 'new' && cwdParam) wsUrl += '&cwd=' + encodeURIComponent(cwdParam);
+  } catch (_) {}
 
   const term = new Terminal({
   fontFamily: "'JetBrainsMono Nerd Font', 'JetBrains Mono', monospace",

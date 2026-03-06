@@ -119,9 +119,14 @@
     #file-viewer-breadcrumb .file-viewer-breadcrumb-trail { flex: 1; min-width: 0; }
     #file-viewer-breadcrumb a { color: #0969da; text-decoration: none; }
     #file-viewer-breadcrumb a:hover { text-decoration: underline; color: #0550ae; }
-    .file-viewer-copy-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; color: #57606a; cursor: pointer; flex-shrink: 0; }
-    .file-viewer-copy-btn:hover { background: #f6f8fa; color: #0969da; border-color: #0969da; }
-    .file-viewer-copy-btn svg { width: 16px; height: 16px; }
+    .file-viewer-breadcrumb-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .file-viewer-copy-btn, .file-viewer-dots-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid #d0d7de; border-radius: 6px; background: #ffffff; color: #57606a; cursor: pointer; flex-shrink: 0; }
+    .file-viewer-copy-btn:hover, .file-viewer-dots-btn:hover { background: #f6f8fa; color: #0969da; border-color: #0969da; }
+    .file-viewer-copy-btn svg, .file-viewer-dots-btn svg { width: 16px; height: 16px; }
+    .file-viewer-dots-menu { display: none; position: fixed; z-index: 200; min-width: 180px; background: #ffffff; border: 1px solid #d0d7de; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 4px 0; }
+    .file-viewer-dots-menu.open { display: block; }
+    .file-viewer-dots-menu .menu-item { display: block; width: 100%; text-align: left; padding: 8px 12px; border: none; border-radius: 0; background: none; color: #24292f; font-size: 14px; cursor: pointer; }
+    .file-viewer-dots-menu .menu-item:hover { background: #f6f8fa; color: #0969da; }
     #file-viewer-content { flex: 1; overflow: auto; padding: 16px; background: #ffffff; min-width: 0; }
     #file-viewer-list .file-viewer-row { display: flex; align-items: center; padding: 6px 0; color: #24292f; font-size: 14px; border-bottom: 1px solid #d0d7de; }
     #file-viewer-list .file-viewer-row a { color: #0969da; text-decoration: none; }
@@ -136,6 +141,62 @@
     .file-viewer-blob .line-table .line-content { padding-left: 8px; white-space: pre; overflow: visible; font-family: "Monaspace Neon", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 13px; line-height: 1.5; color: #24292f; background: #ffffff; }
     .file-viewer-truncated { padding: 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 12px; color: #57606a; font-size: 14px; }
     .file-viewer-truncated a { color: #0969da; }
+    #diff-viewer-wrap { display: none; position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 50; flex-direction: column; background: #ffffff; padding-top: 56px; }
+    #diff-viewer-wrap.visible { display: flex; }
+    #diff-viewer-breadcrumb { padding: 12px 16px; border-bottom: 1px solid #d0d7de; background: #f6f8fa; color: #57606a; font-size: 14px; }
+    #diff-viewer-content { flex: 1; overflow: auto; padding: 16px; min-width: 0; }
+    .diff-toolbar { margin-bottom: 12px; }
+    .diff-expand-btn { padding: 8px 12px; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; color: #24292f; cursor: pointer; font-size: 14px; }
+    .diff-expand-btn:hover { background: #eaeef2; }
+    .diff-file { margin-bottom: 24px; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; }
+    .diff-file-header { padding: 8px 12px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; font-size: 14px; color: #24292f; font-family: ui-monospace, monospace; }
+    .diff-line { font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; padding: 0 12px; display: flex; }
+    .diff-line-prefix { user-select: none; width: 20px; flex-shrink: 0; }
+    .diff-line-add { background: #dafbe1; color: #24292f; }
+    .diff-line-del { background: #ffebe9; color: #24292f; }
+    .diff-line-context { background: #ffffff; color: #57606a; }
+    .diff-file-header .diff-stage-btn, .diff-file-header .diff-copy-agent-btn { margin-left: 8px; padding: 4px 8px; font-size: 12px; border: 1px solid #d0d7de; border-radius: 4px; background: #fff; cursor: pointer; }
+    .diff-file-header .diff-stage-btn:hover, .diff-file-header .diff-copy-agent-btn:hover { background: #f6f8fa; }
+    .diff-file-header .diff-checkbox-label { margin-left: 12px; font-size: 12px; color: #24292f; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; user-select: none; }
+    .diff-file-header .diff-checkbox-label input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #0969da; }
+    .diff-staged-badge, .diff-viewed-badge, .diff-ignored-badge { margin-left: 6px; font-size: 12px; color: #57606a; }
+    .diff-hunk { margin: 0; border-top: 1px solid #d0d7de; }
+    .diff-hunk-header { padding: 4px 12px; background: #eaeef2; font-family: ui-monospace, monospace; font-size: 12px; color: #57606a; }
+    .diff-expand-row { display: flex; align-items: center; padding: 2px 12px; font-family: ui-monospace, monospace; font-size: 12px; background: #ddf4ff; color: #0969da; cursor: pointer; border: none; width: 100%; text-align: left; }
+    .diff-expand-row:hover { background: #b6e3ff; }
+    .diff-expand-row .diff-expand-icon { margin-right: 6px; }
+    .diff-expand-row.diff-expand-below { background: #ddf4ff; }
+    .diff-expand-row.diff-expand-below:hover { background: #b6e3ff; }
+    .diff-comment-form { margin: 4px 12px 12px 40px; padding: 12px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; }
+    .diff-comment-form textarea { width: 100%; min-height: 60px; padding: 8px; border: 1px solid #d0d7de; border-radius: 4px; font-size: 13px; resize: vertical; box-sizing: border-box; font-family: inherit; }
+    .diff-comment-form-actions { margin-top: 8px; display: flex; gap: 8px; justify-content: flex-end; }
+    .diff-comment-form-actions button { padding: 6px 12px; font-size: 12px; border-radius: 4px; border: 1px solid #d0d7de; background: #fff; cursor: pointer; }
+    .diff-comment-form-actions button:hover { background: #f6f8fa; }
+    .diff-comment-form-actions .diff-comment-add-btn { background: #0969da; color: #fff; border-color: #0969da; }
+    .diff-comment-form-actions .diff-comment-add-btn:hover { background: #0550ae; }
+    .diff-line { font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5; padding: 0 12px; display: flex; }
+    .diff-line-num { width: 32px; flex-shrink: 0; text-align: right; padding-right: 8px; color: #8b949e; user-select: none; }
+    .diff-line-num.empty { visibility: hidden; }
+    .diff-line-prefix { width: 14px; flex-shrink: 0; user-select: none; }
+    .diff-line-content { flex: 1; overflow-x: auto; white-space: pre; min-width: 0; }
+    .diff-comment-inline { margin: 4px 12px 8px 40px; padding: 8px; background: #fff8c5; border-left: 3px solid #9e6a03; font-size: 13px; color: #24292f; }
+    .diff-comment-inline .diff-comment-range { font-family: ui-monospace, monospace; font-size: 11px; color: #57606a; margin-bottom: 4px; }
+    .diff-comment-inline .diff-comment-actions { margin-left: 8px; }
+    .diff-comment-inline .diff-comment-edit-btn, .diff-comment-inline .diff-comment-remove-btn { padding: 2px 8px; margin-right: 4px; font-size: 11px; border: 1px solid #d0d7de; border-radius: 4px; background: #fff; cursor: pointer; color: #0969da; }
+    .diff-comment-inline .diff-comment-edit-btn:hover, .diff-comment-inline .diff-comment-remove-btn:hover { background: #f6f8fa; }
+    .diff-comment-inline .diff-comment-remove-btn { color: #cf222e; }
+    .diff-review-modal { display: none; position: absolute; inset: 0; z-index: 100; align-items: center; justify-content: center; }
+    .diff-review-modal.visible { display: flex; }
+    .diff-review-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.4); }
+    .diff-review-modal-panel { position: relative; background: #fff; border-radius: 8px; box-shadow: 0 16px 48px rgba(0,0,0,0.2); padding: 24px; min-width: 400px; max-width: 90vw; max-height: 85vh; display: flex; flex-direction: column; }
+    .diff-review-modal-title { margin: 0 0 8px 0; font-size: 18px; }
+    .diff-review-modal-hint { margin: 0 0 12px 0; font-size: 13px; color: #57606a; }
+    .diff-review-textarea { width: 100%; min-height: 200px; padding: 12px; border: 1px solid #d0d7de; border-radius: 6px; font-family: ui-monospace, monospace; font-size: 13px; resize: vertical; box-sizing: border-box; }
+    .diff-review-modal-actions { margin-top: 16px; display: flex; gap: 8px; justify-content: flex-end; }
+    .diff-review-modal-actions button { padding: 8px 16px; border-radius: 6px; border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer; font-size: 14px; }
+    .diff-review-modal-actions button:hover { background: #eaeef2; }
+    .diff-review-confirm-btn { background: #0969da; color: #fff; border-color: #0969da; }
+    .diff-review-confirm-btn:hover { background: #0550ae; border-color: #0550ae; }
   </style>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.min.css">
 </head>
@@ -157,6 +218,24 @@
   <div id="file-viewer-wrap">
     <div id="file-viewer-breadcrumb"></div>
     <div id="file-viewer-content"></div>
+  </div>
+
+  <div id="diff-viewer-wrap">
+    <div id="diff-viewer-breadcrumb"></div>
+    <div id="diff-viewer-content"></div>
+    <div id="diff-review-modal" class="diff-review-modal" aria-hidden="true">
+      <div class="diff-review-modal-backdrop"></div>
+      <div class="diff-review-modal-panel">
+        <h2 class="diff-review-modal-title">Review comments</h2>
+        <p class="diff-review-modal-hint">Edit the comments below. On confirm, the selected files will be staged (except ignored).</p>
+        <textarea id="diff-review-textarea" class="diff-review-textarea" rows="12"></textarea>
+        <div class="diff-review-modal-actions">
+          <button type="button" class="diff-review-copy-btn">Copy to clipboard</button>
+          <button type="button" class="diff-review-cancel-btn">Cancel</button>
+          <button type="button" class="diff-review-confirm-btn">Confirm &amp; stage files</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="special-keyboard"></div>

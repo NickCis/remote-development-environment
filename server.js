@@ -4,6 +4,7 @@ const { spawn } = require('node-pty');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
 const { parse } = require('url');
 const crypto = require('crypto');
 const cookieParser = require('cookie-parser');
@@ -528,6 +529,99 @@ function findNearestGitRoot(startDir) {
   }
 }
 
+function parseGitDiff(raw) {
+  const files = [];
+  const chunks = raw.split(/\n(?=diff --git )/);
+  for (const chunk of chunks) {
+    if (!/^diff --git /.test(chunk)) continue;
+    const pathMatch = chunk.match(/^diff --git a\/(.+?) b\//m);
+    const filepath = pathMatch ? pathMatch[1] : '';
+    const hunks = [];
+    const chunkLines = chunk.split('\n');
+    let i = 0;
+    while (i < chunkLines.length) {
+      const line = chunkLines[i];
+      const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+      if (hunkMatch) {
+        const oldStart = parseInt(hunkMatch[1], 10);
+        const oldCount = parseInt(hunkMatch[2] || '1', 10);
+        const newStart = parseInt(hunkMatch[3], 10);
+        const newCount = parseInt(hunkMatch[4] || '1', 10);
+        const lines = [];
+        let oldLine = oldStart;
+        let newLine = newStart;
+        i++;
+        while (i < chunkLines.length && !chunkLines[i].startsWith('@@')) {
+          const l = chunkLines[i];
+          const type = l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : 'context';
+          const content = (type === 'add' || type === 'del') ? l.slice(1) : l;
+          lines.push({ type, content, oldLine: type !== 'add' ? oldLine : null, newLine: type !== 'del' ? newLine : null });
+          if (type !== 'add') oldLine++;
+          if (type !== 'del') newLine++;
+          i++;
+        }
+        hunks.push({ oldStart, oldCount, newStart, newCount, header: line, lines });
+      } else {
+        i++;
+      }
+    }
+    files.push({ path: filepath, hunks });
+  }
+  return files;
+}
+
+app.get('/api/diff', requireAuth, (req, res) => {
+  const rawPath = req.query.path || '';
+  const resolved = rawPath === '' ? CWD : resolveSafePath(rawPath);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  try {
+    const rel = path.relative(CWD, resolved);
+    const pathArg = rel && rel !== '..' && !rel.startsWith('..') ? '-- ' + rel : '';
+    const out = execSync('git diff --no-color -U3 ' + pathArg, { cwd: CWD, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
+    const files = parseGitDiff(out);
+    res.json({ files });
+  } catch (e) {
+    if (e.stdout) {
+      const files = parseGitDiff(e.stdout);
+      return res.json({ files });
+    }
+    res.status(500).json({ error: e.message || 'Failed to get diff' });
+  }
+});
+
+app.get('/api/diff/context', requireAuth, (req, res) => {
+  const rawPath = req.query.path;
+  if (rawPath == null) return res.status(400).json({ error: 'Path required' });
+  const resolved = resolveSafePath(rawPath);
+  if (resolved === null) return res.status(400).json({ error: 'Invalid path' });
+  const start = Math.max(1, parseInt(req.query.start, 10) || 1);
+  const end = Math.max(start, parseInt(req.query.end, 10) || start);
+  const revision = (req.query.revision || 'HEAD').trim();
+  if (!/^[a-zA-Z0-9_:.-]+$/.test(revision)) return res.status(400).json({ error: 'Invalid revision' });
+  try {
+    const rel = path.relative(CWD, resolved).replace(/\\/g, '/');
+    const out = execSync('git', ['show', revision + ':' + rel], { cwd: CWD, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
+    const lines = out.split(/\r?\n/);
+    const slice = lines.slice(Math.max(0, start - 1), end);
+    res.json({ lines: slice });
+  } catch (e) {
+    res.status(404).json({ error: e.message || 'Failed to get context (file may not exist in ' + revision + ')' });
+  }
+});
+
+app.post('/api/diff/stage', requireAuth, (req, res) => {
+  const paths = req.body && req.body.paths;
+  if (!Array.isArray(paths) || paths.length === 0) return res.status(400).json({ error: 'paths array required' });
+  const resolved = paths.map((p) => (typeof p === 'string' ? resolveSafePath(p) : null)).filter(Boolean);
+  const relPaths = resolved.map((abs) => path.relative(CWD, abs).replace(/\\/g, '/'));
+  try {
+    if (relPaths.length) execSync('git', ['add', '--', ...relPaths], { cwd: CWD });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Failed to stage' });
+  }
+});
+
 app.get('/api/fs/copy-path', requireAuth, (req, res) => {
   const raw = req.query.path;
   if (raw == null) return res.status(400).json({ error: 'Path required' });
@@ -614,22 +708,24 @@ function getClientIp(req, socket) {
   return socket && socket.remoteAddress ? socket.remoteAddress : '?';
 }
 
-function createPty(cols, rows) {
+function createPty(cols, rows, cwdOverride) {
+  const dir = cwdOverride != null ? resolveSafePath(cwdOverride) : null;
+  const cwd = dir || CWD;
   return spawn(process.env.SHELL || 'bash', [], {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
-    cwd: CWD,
+    cwd,
     env: process.env,
   });
 }
 
-function getOrCreateSession(sessionParam) {
+function getOrCreateSession(sessionParam, cwdFromQuery) {
   let id;
 
   if (sessionParam === 'new') {
     id = crypto.randomUUID();
-    const pty = createPty(80, 24);
+    const pty = createPty(80, 24, cwdFromQuery);
     const clients = new Set();
     const createdAt = Date.now();
     const session = { pty, clients, createdAt, name: '', titleBuffer: '', outputBuffer: Buffer.alloc(0) };
@@ -724,9 +820,10 @@ function getOrCreateSession(sessionParam) {
 wss.on('connection', (ws, req) => {
   const { query } = parse(req.url || '', true);
   const sessionParam = query && query.session;
+  const cwdFromQuery = query && query.cwd;
   const clientType = query && query.client === 'cli' ? 'cmd' : 'browser';
 
-  const { id, session } = getOrCreateSession(sessionParam);
+  const { id, session } = getOrCreateSession(sessionParam, cwdFromQuery);
   session.clients.add(ws);
 
   const clientIp = getClientIp(req, req.socket);
